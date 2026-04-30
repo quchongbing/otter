@@ -124,5 +124,6 @@ result = solve_plasma_workflow(
 
 ## References
 
-- C. E. Starrett and D. Saumon, *Electronic and ionic structures of warm and hot dense matter*, Phys. Rev. E 87, 013104 (2013), https://doi.org/10.1103/PhysRevE.87.013104
 - C. E. Starrett and D. Saumon, *A simple method for determining the ionic structure of warm dense matter*, High Energy Density Physics 10, 35-42 (2014), https://doi.org/10.1016/j.hedp.2013.12.001
+
+- C. E. Starrett and D. Saumon, *Electronic and ionic structures of warm and hot dense matter*, Phys. Rev. E 87, 013104 (2013), https://doi.org/10.1103/PhysRevE.87.013104

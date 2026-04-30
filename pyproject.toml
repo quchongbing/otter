@@ -21,6 +21,13 @@ dependencies = [
 dev = [
   "pytest",
 ]
+docs = [
+  "sphinx==8.2.3",
+  "sphinx-rtd-theme",
+  "sphinx-toolbox",
+  "sphinx-gallery",
+  "sphinxcontrib-bibtex",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

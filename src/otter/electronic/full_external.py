@@ -1922,22 +1922,27 @@ def _print_state_summary(
 
 def _print_bound_table(title: str, matrix: np.ndarray, l_values: np.ndarray) -> None:
     """
-    Pretty-print a bound-state matrix indexed by [l, n].
+    Pretty-print a bound-state matrix indexed by [l, radial-state index].
+
+    For each angular channel, the first displayed state has principal quantum
+    number n = l + 1.
     """
     mat = np.asarray(matrix, dtype=float)
     l_arr = np.asarray(l_values, dtype=int)
     if mat.ndim != 2 or mat.shape[0] != l_arr.size:
         return
     n_states = mat.shape[1]
-    col_labels = [f"n={i+1}" for i in range(n_states)]
-    head = "     | " + " | ".join([f"{c:>10s}" for c in col_labels])
-    sep = "-----+" + "+".join(["-" * 12 for _ in col_labels])
+    cell_width = 7
+    col_labels = ["n=l+1"] + [str(i + 1) for i in range(1, n_states)]
+    head = "     | " + " | ".join(f"{label:>{cell_width}s}" for label in col_labels)
+    sep = "-----+" + "+".join("-" * (cell_width + 2) for _ in col_labels)
     print(f"\n{title}")
     print(head)
     print(sep)
     for i, l_val in enumerate(l_arr):
-        row = " | ".join([f"{mat[i, j]:10.4f}" for j in range(n_states)])
-        print(f" l={int(l_val):<2d}| {row}")
+        row = " | ".join(f"{mat[i, j]:{cell_width}.3f}" for j in range(n_states))
+        row_label = f"l={int(l_val)}" if i == 0 else f"{int(l_val)}"
+        print(f" {row_label:>3s} | {row}")
 
 
 def _external_fixed_mu_scf(
