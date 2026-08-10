@@ -1,4 +1,9 @@
-"""Bound-state density and ion-partition helpers for average-atom solves."""
+"""Bound-state density and ion-partition helpers for average-atom solves.
+
+The pressure-ionization weight and cutoff follow :cite:`StarrettSaumon2013`;
+the implementation keeps the selected cutoff and occupation controls explicit
+so they are not mistaken for a citation of every numerical detail.
+"""
 from __future__ import annotations
 
 import math

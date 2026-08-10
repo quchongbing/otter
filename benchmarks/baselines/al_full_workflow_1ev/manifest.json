@@ -1,0 +1,83 @@
+{
+  "schema_version": "otter_benchmark_manifest_v1",
+  "benchmark_id": "al_full_workflow_1ev",
+  "status": "accepted_with_dirty_worktree_provenance",
+  "title": "Complete Al 8.1 g/cc, Te=Ti=1 eV electronic-to-ionic workflow",
+  "data_rights": {
+    "origin_type": "project_generated_numerical_output",
+    "third_party_reference_data_included": false,
+    "method_citations_only": true
+  },
+  "method_references": [
+    {
+      "citation_key": "StarrettSaumon2014",
+      "doi": "10.1016/j.hedp.2013.12.001",
+      "scope": "average atom, pseudoatom, QOZ, and HNC workflow"
+    },
+    {
+      "citation_key": "Chabrier1990",
+      "doi": "10.1051/jphys:0199000510150160700",
+      "scope": "finite-temperature jellium local-field correction"
+    }
+  ],
+  "units": {
+    "radius": "Bohr",
+    "wavenumber": "Bohr^-1",
+    "electronic_density": "Bohr^-3",
+    "screening_cloud_k": "electron number",
+    "ion_electron_form_factor_k": "electron number",
+    "effective_pair_potential_r": "Hartree",
+    "effective_pair_potential_k": "Hartree Bohr^3",
+    "energy": "Hartree",
+    "gii_and_sii": "dimensionless"
+  },
+  "producer": {
+    "project": "Otter",
+    "git_commit": "f47610cb802699e108248fa7fc138e7cbede282e",
+    "script_relative_path": "docs/examples/plot_al_full_workflow.py",
+    "script_sha256_at_generation": "bcc6a1edada1f366e77b3e5cc0095521bbfff650d627c3a99f922bb1a3cf8c1c",
+    "script_sha256_current": "14f0ffe15cdf8b03b528642c02610f2e1f8d8d69ed1c6740bb88a05932f9104a",
+    "worktree_clean_at_generation": false,
+    "git_status_porcelain_sha256": "cf396e9a37a47a147122eb221712d4ce46947dcc22987dd048d37bf91fd90914",
+    "note": "The complete standalone gallery script generated this reviewed state. Its current revision differs from the generation snapshot only in presentation/backend handling. Script and data SHA-256 values provide integrity; because the source worktree was dirty, this record is not a clean-commit reconstruction."
+  },
+  "configuration": {
+    "element": "Al",
+    "rho_g_cc": 8.1,
+    "te_ev": 1.0,
+    "ti_ev": 1.0,
+    "electronic_model": "qm",
+    "structure_model": "IS",
+    "bound_occ_mode": "fd",
+    "bound_rmax_mult": null,
+    "bound_zero_tail_refine": true,
+    "b3_tail_model": "full",
+    "chi0_model": "lindhard_fd",
+    "lfc_model": "chabrier1990",
+    "qoz_zbar_mode": "pseudoatom_partition",
+    "qoz_renormalize_nscr_to_zbar": true,
+    "qoz_n_points_before_padding": 4096,
+    "hnc_tolerance": 1e-06,
+    "hnc_transform_closure_tolerance": 0.001,
+    "hnc_max_iterations": 1000,
+    "r_retained_max_bohr": 20.0,
+    "k_retained_max_bohr_inv": 20.0
+  },
+  "scientific_audit": {
+    "zbar_aa_ws": 3.026630150638022,
+    "zbar_partition": 3.0230698957000275,
+    "zbar_qoz": 3.0230698957000275,
+    "q_scr_native_raw": 3.030818639035534,
+    "q_scr_grid_raw": 3.030928376787292,
+    "q_scr_used": 3.0230698957000275,
+    "q_scr_scale_factor": 0.9974072385465345,
+    "hnc_best_residual": 9.444585671473852e-07,
+    "hnc_closure_mismatch": 8.330296917447022e-05,
+    "note": "The gallery plots both the raw interpolated screening cloud and the uniformly charge-corrected cloud used by QOZ."
+  },
+  "state": {
+    "state_id": "al_full_workflow_rho8p1_te1_ti1",
+    "data_file": "Al_rho8p1gcc_Te1eV_Ti1eV.npz",
+    "data_sha256": "40acb8c865dd8f33e68e1aaadfc4d8a93ab44501dbee3d00472f328806ad03e1"
+  }
+}

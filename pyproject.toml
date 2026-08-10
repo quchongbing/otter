@@ -1,33 +1,70 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "otter"
-version = "0.1.0"
-description = "Electronic and ionic structure calculations for dense plasmas based on the work of Starrett and Saumon 2013/2014."
+version = "0.2.0"
+description = "Average-atom, pseudoatom, and ionic-structure calculations for dense plasmas."
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "BSD-3-Clause"}
+license = "BSD-3-Clause"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{name = "Chongbing Qu"}]
+keywords = [
+  "average atom",
+  "dense plasma",
+  "ionic structure",
+  "pseudoatom",
+  "warm dense matter",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
-  "numpy",
-  "scipy",
-  "matplotlib",
-  "numba",
+  "numpy>=2.0,<3",
+  "scipy>=1.13,<2",
+  "numba>=0.60,<1",
 ]
 
 [project.optional-dependencies]
+plot = [
+  "matplotlib>=3.8",
+]
 dev = [
-  "pytest",
+  "build>=1.2",
+  "matplotlib>=3.8",
+  "pytest>=8",
+  "twine>=5",
 ]
 docs = [
+  "matplotlib>=3.8",
   "sphinx==8.2.3",
   "sphinx-rtd-theme",
-  "sphinx-toolbox",
   "sphinx-gallery",
   "sphinxcontrib-bibtex",
 ]
 
+[project.urls]
+Homepage = "https://github.com/quchongbing/otter"
+Repository = "https://github.com/quchongbing/otter"
+Issues = "https://github.com/quchongbing/otter/issues"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+otter = ["literature.bib"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]

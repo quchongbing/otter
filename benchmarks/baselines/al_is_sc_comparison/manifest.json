@@ -1,0 +1,79 @@
+{
+  "schema_version": "otter_example_manifest_v1",
+  "example_id": "al_is_sc_comparison",
+  "title": "Aluminium IS versus experimental SC feedback with KS-DFT and Thomas--Fermi electrons",
+  "status": "accepted",
+  "method_publication": {
+    "authors": [
+      "C. E. Starrett",
+      "D. Saumon"
+    ],
+    "title": "A simple method for determining the ionic structure of warm dense matter",
+    "journal": "High Energy Density Physics",
+    "volume": "10",
+    "pages": "35-42",
+    "year": 2014,
+    "doi": "10.1016/j.hedp.2013.12.001",
+    "relevant_section": "2.4",
+    "relevant_equations": "19-20"
+  },
+  "data_rights": {
+    "origin_type": "project_generated_numerical_output",
+    "third_party_reference_data_included": false,
+    "method_citations_only": true
+  },
+  "units": {
+    "radius": "Bohr",
+    "wavenumber": "Bohr^-1",
+    "energy": "Hartree",
+    "temperature": "eV",
+    "mass_density": "g cm^-3",
+    "gii_and_sii": "dimensionless",
+    "time": "second"
+  },
+  "configuration": {
+    "electronic_models": [
+      "qm",
+      "tf"
+    ],
+    "structure_models": [
+      "IS",
+      "SC (experimental)"
+    ],
+    "aa_n_points": 1024,
+    "continuum_workers": 8,
+    "bound_occ_mode": "fd",
+    "bound_rmax_mult": null,
+    "bound_zero_tail_refine": false,
+    "b3_tail_model": "full",
+    "qoz_n_points_before_padding": 1024,
+    "zbar_mode": "pseudoatom_partition",
+    "renormalize_nscr_to_zbar": true,
+    "chi0_model": "lindhard_fd",
+    "lfc_model": "chabrier1990",
+    "hnc_tolerance": 0.0001,
+    "hnc_transform_closure_tolerance": 0.0025,
+    "hnc_max_iterations": 500,
+    "sc_max_outer_iterations": 16,
+    "sc_g_tolerance": 0.0005,
+    "sc_correlation_potential_tolerance_ha": 0.0005,
+    "sc_correlation_potential_mix": 0.5,
+    "strict_sc_convergence_required": true
+  },
+  "producer": {
+    "project": "Otter",
+    "git_commit": "4e3cfb2a21fe7e6784e0aa1adaef0fcb2ab41206",
+    "script_sha256": "73e7f7d68ac658ed14293c6eb1e9b7eaa6a24b80ca690775174fc8d25a4e3188",
+    "worktree_clean_at_generation": true,
+    "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "script_relative_path": "benchmarks/runners/regenerate_al_is_sc_comparison.py"
+  },
+  "state": {
+    "element": "Al",
+    "rho_g_cc": 8.1,
+    "te_ev": 15.0,
+    "ti_ev": 15.0,
+    "data_file": "Al_rho8p1gcc_Te15eV_Ti15eV_qm_tf_is_sc.npz",
+    "data_sha256": "b0db32a75accfcc0044ac1db27d177b55231fd4b375fddf8a6b7d3d43f9c5aa1"
+  }
+}

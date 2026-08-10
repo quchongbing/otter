@@ -1,0 +1,107 @@
+{
+  "schema_version": "otter_reference_manifest_v1",
+  "reference_id": "ion_structure_library",
+  "origin_type": "publication_figure_digitizations_or_extractions",
+  "redistribution_status": "published_by_maintainer_with_attribution",
+  "license_declared": "NOASSERTION",
+  "public_release_gate": "resolved",
+  "note": "These numerical values are published by maintainer decision with per-file attribution. They are not covered by Otter's BSD-3-Clause source-code license, and no third-party data license is asserted. Source PDFs are not bundled.",
+  "release_decision": {
+    "decision_date": "2026-08-10",
+    "decision_maker": "Otter project maintainer",
+    "scope": "the numerical reference files listed in this manifest",
+    "policy": "publish with explicit publication attribution and license status NOASSERTION",
+    "rights_note": "This repository policy is not a representation that the cited publishers licensed the extracted coordinates for redistribution."
+  },
+  "inventory_file": "inventory.json",
+  "inventory_sha256": "de57f2f56c629956f42242061f06769c11b21e4b2be44b80fd9b3bbc6c95008a",
+  "files": [
+    {
+      "path": "gill_et_al_2015/Sii_Al_T5ev_rho2.7_KS-PAMD_Gill.csv",
+      "sha256": "0059a2859eaefd8d403d0cf1f0bb26fb8927fa79aac22a39f07e097aaccfd588",
+      "citation_key": "GillEtAl2015"
+    },
+    {
+      "path": "gill_et_al_2015/Sii_Al_T5ev_rho2.7_QMD_Gill.csv",
+      "sha256": "ec8f2e185656ea006a60fbf5567c24fef4ca134cd3123928d6c5da17df66f372",
+      "citation_key": "GillEtAl2015"
+    },
+    {
+      "path": "gill_et_al_2015/Sii_Al_T5ev_rho2.7_TF-PAMD_Gill.csv",
+      "sha256": "80fc7f44da8b232dfe8412706ec4ba703ce2c694bb5ac6ced50ea9bd02a24975",
+      "citation_key": "GillEtAl2015"
+    },
+    {
+      "path": "clerouin_et_al_2015/Jean_2015_Al_rho8.1_Te10.0_Ti10.csv",
+      "sha256": "6069f1e636e777799a23c439acff3f6dce67b37d23ed71c1aff1f2d621ad267e",
+      "citation_key": "ClerouinEtAl2015"
+    },
+    {
+      "path": "clerouin_et_al_2015/Jean_2015_Al_rho8.1_Te10.0_Ti2.0_OFMD.csv",
+      "sha256": "005eba9aceb4f4bc9e8bd8251f20ab9c014b5a334988bb25afff092187b125a6",
+      "citation_key": "ClerouinEtAl2015"
+    },
+    {
+      "path": "clerouin_et_al_2015/Jean_2015_Al_rho8.1_Te10.0_Ti2.0_SRR.csv",
+      "sha256": "fc2ae3a1358d70a09660d01e992a2d3d09d82580fdb68be28ad91a65bbcb03a6",
+      "citation_key": "ClerouinEtAl2015"
+    },
+    {
+      "path": "wunsch_et_al_2009/Sii_DFTMD_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "1d02b849ffa6bae81b70b526239d2abbda7ba4d58c20fa009c8ddb53b62a7945",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/Sii_HNC-YSRR_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "ac983f6e3fd63498a85ded0c33c79d45fded7ca3cc4747d90381e0b0afa2adf7",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/Sii_HNCKK_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "f80a4f86acbb0f40f545e0e1f8d2858e8946f8356bf0d41488347deccd0acd0a",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/Sii_HNCY_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "7c7072eceb98379e9f61b80484e3c71974eee847c7c0362d6fc6cf4bbd431c88",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/gii_DFTMD_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "fe8ec8fe8d1bf528fc52773d6a7564ccf8d9bda4c907f0bf9a903b6dee1a7ac0",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/gii_HNC-KK_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "eeaef145f79a8952cb88bdb9eb9c61ab38c2de9a953a7d8b75900839b88010b1",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/gii_HNC-YSRR_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "a90d6fe4fd41d8ca49b19a54e63ba145fdc4b93ad90dc1b4244d32cef4881117",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "wunsch_et_al_2009/gii_HNC-Y_Be_3rho0_T13_Z2_wunsch2009.csv",
+      "sha256": "7a1b5a9474d03fbdaccdd02e66e959545a456bd27b6dea8e82199527841cc526",
+      "citation_key": "WunschEtAl2009"
+    },
+    {
+      "path": "starrett_saumon_2013/gii_C_20gcc_50.0ev_starrett.csv",
+      "sha256": "5c3a6649f1c6b30e497890da510fdd7b346419e53c2cf350b6883b36278ca5b3",
+      "citation_key": "StarrettSaumon2013"
+    },
+    {
+      "path": "starrett_saumon_2013/gii_C_3.7gcc_8.62ev_starrett.csv",
+      "sha256": "04080bbcb04473c1b1d79f611c267f66595dee72b3d67d6833554af559ce81fc",
+      "citation_key": "StarrettSaumon2013",
+      "status": "retained_reference_without_accepted_otter_baseline"
+    },
+    {
+      "path": "starrett_saumon_2013/gii_C_3.7gcc_8.62ev_starrett_DFTMD.csv",
+      "sha256": "a75e1dace9fe309fa505422971d161790ea72c4369019f9a97d70cba9e3911a5",
+      "citation_key": "StarrettSaumon2013",
+      "status": "retained_reference_without_accepted_otter_baseline"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1120" viewBox="0 0 1500 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Otter average-atom to QOZ/HNC implementation flow</title>
+  <desc id="desc">Inputs feed full and external average atoms. Bound and continuum states produce densities, B3 continues their tails, the pseudoatom partition produces screening clouds, and the electron response produces pair potentials for QOZ and HNC.</desc>
+  <defs>
+    <style>
+      .title{font-family:sans-serif;font-size:28px;font-weight:700;fill:#172033}
+      .section{font-family:sans-serif;font-size:21px;font-weight:700;fill:#172033}
+      .head{font-family:sans-serif;font-size:17px;font-weight:700;fill:#172033}
+      .txt{font-family:sans-serif;font-size:14px;fill:#27364a}
+      .small{font-family:sans-serif;font-size:12px;fill:#475569}
+      .code{font-family:monospace;font-size:12px;fill:#334155}
+      .box{stroke:#475569;stroke-width:2;rx:12}.arrow{stroke:#334155;stroke-width:2.2;fill:none}
+      .feedback{stroke:#2563eb;stroke-width:2.2;stroke-dasharray:8 6;fill:none}
+    </style>
+  </defs>
+  <rect width="1500" height="1120" fill="#f8fafc"/>
+  <text x="750" y="40" text-anchor="middle" class="title">Otter physics → numerical algorithm → code path</text>
+
+  <rect x="35" y="75" width="260" height="115" class="box" fill="#fee2e2"/>
+  <text x="165" y="106" text-anchor="middle" class="head">INPUT</text>
+  <text x="55" y="136" class="txt">composition, ρ, Tₑ, Tᵢ</text>
+  <text x="55" y="160" class="txt">electronic model, LFC, closure</text>
+  <text x="55" y="181" class="code">PlasmaWorkflowConfig</text>
+
+  <rect x="350" y="75" width="800" height="115" class="box" fill="#e0f2fe"/>
+  <text x="750" y="106" text-anchor="middle" class="head">UNIFIED ORCHESTRATOR</text>
+  <text x="380" y="136" class="txt">parse species → select QM/TF → single species or common-μ mixture → validate</text>
+  <text x="380" y="162" class="code">solve_plasma_workflow()  ·  solve_mixture_full_then_ext()</text>
+  <text x="380" y="181" class="small">Fail closed: unconverged SCF, common μ, or threshold state does not enter QOZ/HNC.</text>
+
+  <path d="M295 132 H350" class="arrow"/>
+  <path d="M750 190 V230" class="arrow"/>
+
+  <rect x="75" y="230" width="1000" height="470" class="box" fill="#eff6ff"/>
+  <text x="95" y="262" class="section">FULL AVERAGE ATOM (central nucleus present)</text>
+
+  <rect x="110" y="290" width="265" height="115" class="box" fill="#fff7ed"/>
+  <text x="242" y="319" text-anchor="middle" class="head">Effective potential</text>
+  <text x="130" y="347" class="txt">−Z/r + V_H[n] + V_xc[n] − V_xc[n0]</text>
+  <text x="130" y="375" class="code">effective_potential_full()</text>
+  <text x="130" y="393" class="small">potential/density SCF mixing</text>
+
+  <rect x="430" y="290" width="270" height="115" class="box" fill="#dcfce7"/>
+  <text x="565" y="319" text-anchor="middle" class="head">Bound: ε &lt; 0</text>
+  <text x="450" y="346" class="txt">matrix Numerov on √r grid</text>
+  <text x="450" y="369" class="txt">sparse shift-invert eigensolve</text>
+  <text x="450" y="393" class="code">solve_bound_states_sparse_numerov()</text>
+
+  <rect x="755" y="290" width="280" height="115" class="box" fill="#dcfce7"/>
+  <text x="895" y="319" text-anchor="middle" class="head">Free: ε &gt; 0 (A3)</text>
+  <text x="775" y="346" class="txt">Numerov scattering + asymptotic match</text>
+  <text x="775" y="369" class="txt">Σℓ, FD-weighted adaptive ∫dε</text>
+  <text x="775" y="393" class="code">continuum_density_scattering_adaptive()</text>
+
+  <path d="M375 347 H430" class="arrow"/>
+  <path d="M375 347 C400 347 400 440 730 440 C740 440 745 405 770 405" class="arrow"/>
+
+  <rect x="430" y="445" width="270" height="105" class="box" fill="#f0fdf4"/>
+  <text x="565" y="474" text-anchor="middle" class="head">Threshold bound guard</text>
+  <text x="450" y="500" class="txt">localization; optional zero-tail Wronskian</text>
+  <text x="450" y="524" class="code">bound_state_reliability_diagnostics()</text>
+  <text x="450" y="542" class="small">unresolved → reject AA point</text>
+
+  <rect x="755" y="445" width="280" height="105" class="box" fill="#f0fdf4"/>
+  <text x="895" y="474" text-anchor="middle" class="head">Resonance/threshold mesh</text>
+  <text x="775" y="500" class="txt">low-E log nodes; optional phase-root scout</text>
+  <text x="775" y="524" class="code">phase_root_resonance_scout()</text>
+  <text x="775" y="542" class="small">finite-resolution diagnostic, not a proof</text>
+
+  <path d="M565 405 V445" class="arrow"/>
+  <path d="M895 405 V445" class="arrow"/>
+
+  <rect x="270" y="585" width="625" height="85" class="box" fill="#fef9c3"/>
+  <text x="582" y="613" text-anchor="middle" class="head">Appendix B3 far-field continuation</text>
+  <text x="295" y="638" class="txt">A exp(−kTF r)/r + B exp(−2b0 r) sin(2a0 r+delta)/r³; guarded pair commit</text>
+  <text x="295" y="660" class="code">fit_tail_params() → apply_tail_match() → _apply_paired_full_external_b3_tail()</text>
+  <path d="M565 550 V585" class="arrow"/>
+  <path d="M895 550 C895 565 850 575 850 585" class="arrow"/>
+
+  <path d="M270 627 H165 V348 H110" class="feedback"/>
+  <text x="94" y="535" class="small" transform="rotate(-90 94 535)">n = n_bound + n_free; update μ and V_eff</text>
+
+  <rect x="1130" y="250" width="330" height="240" class="box" fill="#f3e8ff"/>
+  <text x="1295" y="281" text-anchor="middle" class="section">EXTERNAL ATOM</text>
+  <text x="1155" y="316" class="txt">same converged μ and n₀</text>
+  <text x="1155" y="342" class="txt">remove central −Z/r</text>
+  <text x="1155" y="368" class="txt">repeat A3 and paired B3 logic</text>
+  <text x="1155" y="402" class="code">effective_potential_external()</text>
+  <text x="1155" y="424" class="code">_external_fixed_mu_scf()</text>
+  <text x="1155" y="456" class="small">output: n_ext(r)</text>
+  <path d="M1075 330 H1130" class="arrow"/>
+
+  <rect x="1115" y="535" width="345" height="135" class="box" fill="#fce7f3"/>
+  <text x="1287" y="565" text-anchor="middle" class="head">Pressure-ionization partition</text>
+  <text x="1140" y="593" class="txt">FD belongs to n_bound; M(E) only to n_ion</text>
+  <text x="1140" y="618" class="txt">n_scr = n_full − n_ext − n_ion</text>
+  <text x="1140" y="643" class="code">_ion_density(); gamma_from_phase_shift_cache()</text>
+  <path d="M1075 625 H1115" class="arrow"/>
+  <path d="M1295 490 V535" class="arrow"/>
+
+  <rect x="75" y="750" width="330" height="125" class="box" fill="#dbeafe"/>
+  <text x="240" y="781" text-anchor="middle" class="head">Charge-consistent qᵢ(k)</text>
+  <text x="100" y="810" class="txt">native ∫n_scr, transform measure, Z̄</text>
+  <text x="100" y="836" class="code">enforce_screening_charge_consistency()</text>
+  <text x="100" y="859" class="small">raw and used charges are both saved</text>
+  <path d="M1287 670 C1287 720 240 710 240 750" class="arrow"/>
+
+  <rect x="475" y="750" width="350" height="125" class="box" fill="#ede9fe"/>
+  <text x="650" y="781" text-anchor="middle" class="head">Jellium response and LFC</text>
+  <text x="500" y="810" class="txt">chi0(k), G_ee(k) → chi_ee(k)</text>
+  <text x="500" y="836" class="code">chi_ee_from_eq17()</text>
+  <text x="500" y="859" class="small">default finite-T LFC: Chabrier 1990</text>
+  <path d="M405 812 H475" class="arrow"/>
+
+  <rect x="895" y="750" width="360" height="125" class="box" fill="#ffedd5"/>
+  <text x="1075" y="781" text-anchor="middle" class="head">Effective ion pair potentials</text>
+  <text x="920" y="810" class="txt">C_Ie = −beta q/chi_ee; stable charge-separated V_ij(k)</text>
+  <text x="920" y="836" class="code">build_effective_vii_from_nscr()</text>
+  <text x="920" y="859" class="code">build_effective_vij_from_nscr()</text>
+  <path d="M825 812 H895" class="arrow"/>
+
+  <rect x="350" y="945" width="800" height="120" class="box" fill="#dcfce7"/>
+  <text x="750" y="977" text-anchor="middle" class="section">OZ / QOZ + HNC CLOSURE</text>
+  <text x="380" y="1008" class="txt">potential continuation → raw OZ positivity → HNC residual + closure checks</text>
+  <text x="380" y="1034" class="code">hnc_solver()  ·  hnc_solver_multicomponent_continuation()</text>
+  <text x="380" y="1057" class="small">outputs: gᵢⱼ(r), Sᵢⱼ(k), hᵢⱼ(r), cᵢⱼ(r), residual and mode diagnostics</text>
+  <path d="M1075 875 C1075 920 750 910 750 945" class="arrow"/>
+
+  <rect x="1190" y="950" width="270" height="105" class="box" fill="#e2e8f0"/>
+  <text x="1325" y="980" text-anchor="middle" class="head">Saved provenance</text>
+  <text x="1215" y="1008" class="txt">metadata + radial/k arrays</text>
+  <text x="1215" y="1032" class="txt">convergence + model choices</text>
+  <path d="M1150 1005 H1190" class="arrow"/>
+</svg>

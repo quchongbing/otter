@@ -80,7 +80,7 @@ def trapz_integral(y: np.ndarray, x: np.ndarray) -> float:
 
 
 def ion_level_weight(energy: float, gamma: float) -> float:
-    """Return M(e) bound-state weight using Starrett2013 Eq. (81)."""
+    """Return the M(e) weight from :cite:`StarrettSaumon2013`, Eq. (81)."""
     if gamma <= 0.0:
         return 1.0
     arg = -2.0 * math.sqrt(math.log(2.0)) * energy / gamma

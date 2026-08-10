@@ -1,0 +1,45 @@
+{
+  "schema_version": "otter_benchmark_manifest_v1",
+  "benchmark_id": "al_rayleigh_weight_10ev",
+  "status": "accepted_project_generated",
+  "title": "Al static Rayleigh weight at 10 eV for three densities",
+  "method_references": [
+    {
+      "citation_key": "StarrettSaumon2014",
+      "doi": "10.1016/j.hedp.2013.12.001",
+      "scope": "pseudoatom form factors and QOZ/HNC ion structure"
+    },
+    {
+      "citation_key": "Chabrier1990",
+      "doi": "10.1051/jphys:0199000510150160700",
+      "scope": "finite-temperature jellium local-field correction"
+    }
+  ],
+  "units": {
+    "wavenumber": "Bohr^-1",
+    "q_and_f": "electron number",
+    "sii_and_rayleigh_weight": "dimensionless"
+  },
+  "configuration": {
+    "element": "Al",
+    "rho_g_cc": [2.7, 8.1, 15.0],
+    "te_ev": 10.0,
+    "ti_ev": 10.0,
+    "electronic_model": "qm",
+    "bound_occ_mode": "fd",
+    "b3_tail_model": "full",
+    "chi0_model": "lindhard_fd",
+    "lfc_model": "chabrier1990",
+    "rayleigh_definition": "abs(q(k)+f(k))**2*Sii(k)"
+  },
+  "producer": {
+    "project": "Otter",
+    "script_relative_path": "docs/examples/plot_al_rayleigh_weight.py",
+    "script_sha256_current": "4eec324ab736668b658c6513bbe92d09c111cbc8ee06d96981ffbbef630fcb12",
+    "note": "All three states were freshly calculated by the standalone Otter example."
+  },
+  "state": {
+    "data_file": "Al_Te10eV_rayleigh.npz",
+    "data_sha256": "e7fc6cf8bc81cf131a95430f3dbd38f88e6d2584ab6f4e0bd0067fa938e8c162"
+  }
+}

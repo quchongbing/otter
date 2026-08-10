@@ -1,4 +1,5 @@
 """Minimal one-component electronic -> ionic structure workflow."""
+
 from __future__ import annotations
 
 import sys
@@ -13,15 +14,32 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
+from otter.plotting import save_figure, set_style
 
 # ===========================================
 #            user input parameters
 # -------------------------------------------
 ELEMENT = "Al"
-RHO_G_CC = 8.1
-TE_EV = 15.0
-TI_EV = 15.0
+RHO_G_CC = 2.7
+TE_EV = 30
+TI_EV = 1
+# -------------------------------------------
+
 SHOW_SCF_PROGRESS = True
+SAVE_NPZ = True
+OUTPUT_PATH = ROOT / "outputs" / "al_state.npz"
+SAVE_FIGURES = True
+FIGURE_STEM = ROOT / "outputs" / "single_species_aa_qoz_hnc"
+
+# Near pressure ionization, a shallow negative-energy orbital can be
+# misclassified by the finite Dirichlet wall even when the common physical
+# AA box is already asymptotic.  This check matches the orbital to the
+# analytic negative-energy exterior on that same physical box.  It does not
+# create the deprecated artificial 40 R_ws bound-only domain.
+RESOLVE_THRESHOLD_BOUND_STATE = True
+THRESHOLD_MAX_BINDING_HA = 1.0e-2
+THRESHOLD_SCAN_POINTS = 64
+THRESHOLD_EDGE_REL_TOL = 0.1
 # ===========================================
 
 
@@ -72,24 +90,17 @@ def main() -> None:
         temperature_ev=TE_EV,
         rho_g_cc=RHO_G_CC,
         ion_temperature_ev=TI_EV,
-        show_progress=SHOW_SCF_PROGRESS,
-        qoz_linear_n_points=2**12,
-        qoz_pad_factor=2.0,
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_high_k_taper_start_frac=0.9,
         aa_overrides={
-            "cont_n_jobs": 1,
-            "cont_rmax_mult": 8.0,
-            "b3_r_fit_max_mult": 5.0,
-            "b3_r_cut_mult": 4.0,
-            "cont_match_r_cut_frac": 0.85,
-            "cont_match_width_frac": 0.15,
-            "source_r_trust_frac": 0.75,
-            "source_blend_frac": 0.03,
-            "b3_tail_fit_points": 20,
-            "b3_tail_blend_points": 10,
-            "geometry_r_ws_cap_bohr": 3.0,
+            "bound_occ_mode": "fd",
+            "bound_rmax_mult": None,
+            "bound_zero_tail_refine": RESOLVE_THRESHOLD_BOUND_STATE,
+            "bound_zero_tail_max_binding_ha": THRESHOLD_MAX_BINDING_HA,
+            "bound_zero_tail_scan_points": THRESHOLD_SCAN_POINTS,
+            "bound_zero_tail_edge_rel_tol": THRESHOLD_EDGE_REL_TOL,
         },
+        show_progress=SHOW_SCF_PROGRESS,
+        save_state_npz=SAVE_NPZ,
+        save_state_path=OUTPUT_PATH,
     )
     result = solve_plasma_workflow(cfg)
     ion = result["ion"]
@@ -97,8 +108,17 @@ def main() -> None:
 
     print(f"element={ELEMENT} Te={TE_EV:g} eV Ti={TI_EV:g} eV rho={RHO_G_CC:g} g/cc")
     print(f"mu={electronic['mu']:.8f} Ha  zbar={electronic['zbar']:.8f}")
-    print(f"HNC iterations={ion['hnc_iters']}  qoz={ion['qoz_build_s']:.3f}s hnc={ion['hnc_solve_s']:.3f}s")
+    print(
+        "threshold="
+        f"{electronic.get('threshold_state_status', 'none')}  "
+        f"representation={electronic.get('threshold_state_representation', 'none')}  "
+        f"E_shallow={float(electronic.get('shallowest_bound_energy_ha', np.nan)):.8e} Ha"
+    )
+    print(
+        f"HNC iterations={ion['hnc_iters']}  qoz={ion['qoz_build_s']:.3f}s hnc={ion['hnc_solve_s']:.3f}s"
+    )
 
+    set_style("docs", palette="deep_science")
     fig, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
     ax_density, ax_potential, ax_gii, ax_sii = axes.ravel()
 
@@ -169,7 +189,15 @@ def main() -> None:
     ax_sii.set_ylabel(r"$S_{ii}(k)$")
     ax_sii.set_xlim(0.0, 20.0)
     ax_sii.legend(fontsize=8)
+    if SAVE_FIGURES:
+        paths = save_figure(fig, FIGURE_STEM)
+        print(
+            "saved figures "
+            + ", ".join(str(path) for path in paths.values())
+        )
     plt.show()
+    if SAVE_NPZ:
+        print(f"saved {result['saved_paths']['state_npz']}")
 
 
 if __name__ == "__main__":

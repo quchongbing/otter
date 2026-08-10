@@ -101,6 +101,34 @@ def dst_lattice_forward(
     return (2.0 * np.pi * transform.dr / transform.k) * dst(work, type=1, axis=-1)
 
 
+def dst_lattice_zero_moment(
+    f_r: np.ndarray,
+    transform: DSTLatticeTransform,
+) -> np.ndarray:
+    r"""Return the strict DST-I lattice's discrete :math:`k\to0` moment.
+
+    For :func:`dst_lattice_forward`, the discrete limit is
+
+    .. math::
+
+       F(0) = 4\pi\,\Delta r\sum_i r_i^2 f(r_i).
+
+    This rectangle-rule moment—not an endpoint-weighted trapezoidal
+    integral—is the zero-mode limit of the transform actually used by
+    QOZ/HNC. Closing the screening charge on the same lattice avoids
+    amplifying a tiny charge residual by the Coulomb ``1/k**2`` factor.
+    """
+    f_r = np.asarray(f_r, dtype=np.float64)
+    if f_r.ndim == 0 or f_r.shape[-1] != transform.r.size:
+        raise ValueError(
+            "f_r must have transform.r.size entries along its last axis."
+        )
+    return 4.0 * np.pi * transform.dr * np.sum(
+        (transform.r**2) * f_r,
+        axis=-1,
+    )
+
+
 def dst_lattice_inverse(
     f_k: np.ndarray,
     transform: DSTLatticeTransform,

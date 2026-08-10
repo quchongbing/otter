@@ -1,4 +1,5 @@
 """Minimal multicomponent workflow for g_ij(r) and S_ij(k)."""
+
 from __future__ import annotations
 
 import sys
@@ -12,6 +13,7 @@ if str(SRC) not in sys.path:
 import matplotlib.pyplot as plt
 import numpy as np
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
+from otter.plotting import save_figure, set_style
 
 # ===========================================
 #            user input parameters
@@ -26,7 +28,9 @@ TI_EV = TE_EV
 SHOW_SCF_PROGRESS = False
 SHOW_MIXTURE_ROOT_PROGRESS = True
 SAVE_NPZ = True
-OUTPUT_PATH = ROOT / "outputs" / "gij_sij_demo.npz"
+OUTPUT_PATH = ROOT / "outputs" / "ch136_state.npz"
+SAVE_FIGURES = True
+FIGURE_STEM = ROOT / "outputs" / "ch136_gij_sij"
 
 
 def _pair_label(species: list[str], i: int, j: int) -> str:
@@ -41,6 +45,7 @@ def _plot_pair_matrices(ion: dict) -> None:
     sij = np.asarray(ion["sij_k"], dtype=float)
     n_species = len(species)
 
+    set_style("docs", palette="deep_science")
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     ax_g, ax_s = axes
     for i in range(n_species):
@@ -58,6 +63,12 @@ def _plot_pair_matrices(ion: dict) -> None:
     ax_s.set_ylabel("S_ij(k)")
     ax_s.set_xlim(0.0, 20.0)
     ax_s.legend(fontsize=8)
+    if SAVE_FIGURES:
+        paths = save_figure(fig, FIGURE_STEM)
+        print(
+            "saved figures "
+            + ", ".join(str(path) for path in paths.values())
+        )
     plt.show()
 
 
@@ -70,22 +81,20 @@ def main() -> None:
         ion_temperature_ev=TI_EV,
         show_progress=SHOW_SCF_PROGRESS,
         show_mu_progress=SHOW_MIXTURE_ROOT_PROGRESS,
-        qoz_linear_n_points=2**12,
-        qoz_pad_factor=2.0,
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_high_k_taper_start_frac=0.9,
-        hnc_mixing_scheme="anderson",
-        aa_overrides={
-            "cont_n_jobs": 1,
-            "cont_rmax_mult": 8.0,
-        },
+        # Production defaults use FD bound occupations, the full B3/Friedel
+        # tail, Chabrier (1990) LFC, charge-closed QOZ, and a physical
+        # multicomponent HNC root.
+        save_state_npz=SAVE_NPZ,
+        save_state_path=OUTPUT_PATH,
     )
     result = solve_plasma_workflow(cfg)
     ion = result["ion"]
 
     print(f"species={ion['species']}")
     print(f"zbar={np.asarray(ion['zbar'])}")
-    print(f"HNC iterations={ion['hnc_iters']}  qoz={ion['qoz_build_s']:.3f}s hnc={ion['hnc_solve_s']:.3f}s")
+    print(
+        f"HNC iterations={ion['hnc_iters']}  qoz={ion['qoz_build_s']:.3f}s hnc={ion['hnc_solve_s']:.3f}s"
+    )
     mix_meta = result["electronic"]["result"].get("meta", {})
     print(
         "mixture root "
@@ -98,20 +107,7 @@ def main() -> None:
     _plot_pair_matrices(ion)
 
     if SAVE_NPZ:
-        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            OUTPUT_PATH,
-            r=ion["r"],
-            k=ion["k"],
-            species=np.asarray(ion["species"], dtype="<U8"),
-            zbar=np.asarray(ion["zbar"], dtype=float),
-            n_i=np.asarray(ion["n_i"], dtype=float),
-            gij_r=np.asarray(ion["gij_r"], dtype=float),
-            sij_k=np.asarray(ion["sij_k"], dtype=float),
-            vij_r=np.asarray(ion["vij_r"], dtype=float),
-            vij_k=np.asarray(ion["vij_k"], dtype=float),
-        )
-        print(f"saved {OUTPUT_PATH}")
+        print(f"saved {result['saved_paths']['state_npz']}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,270 @@
+{
+  "baseline": {
+    "configuration": {
+      "aa_overrides": {
+        "b3_r_cut_mult": 3.0,
+        "b3_r_fit_max_mult": 4.0,
+        "b3_source_charge_constraint": false,
+        "b3_tail_fit_window_mode": "local",
+        "b3_tail_local_fit_width_mult": 0.064,
+        "b3_tail_model": "full",
+        "b3_tail_stage1_mode": "in_scf",
+        "b3_tail_stage2_mode": "in_scf",
+        "b3_tail_target": "full",
+        "bound_occ_mode": "fd",
+        "cont_n_jobs": 1,
+        "ext_b3_tail_mode": "in_scf",
+        "ext_b3_use_source_closure": false,
+        "full_b3_use_source_closure": false,
+        "ph_kappa": 0.0,
+        "ph_kappa_iters": 0
+      },
+      "composition": {
+        "counts": [
+          1.0,
+          1.36
+        ],
+        "elements": [
+          "C",
+          "H"
+        ]
+      },
+      "hnc": {
+        "max_iter": 240,
+        "tol": 1e-05
+      },
+      "qoz": {
+        "chi0_model": "lindhard_fd",
+        "high_k_taper_start_frac": 0.9,
+        "lfc_model": "chabrier1990",
+        "n_points": 4096,
+        "pad_factor": 2.0,
+        "renormalize_nscr": true,
+        "zbar_mode": "pseudoatom_partition"
+      },
+      "root": {
+        "mu_e_tol_ha": 0.0001,
+        "root_brent_maxiter": 24,
+        "root_maxfev": 32,
+        "root_tol": 0.0001
+      },
+      "schema": 1,
+      "state": "see states; cache signature stores each state separately",
+      "structure_model": "IS"
+    },
+    "description": "Validated private precursor IS-QOZ/HNC curves cropped to the published 0 <= r <= 6 Bohr comparison window.",
+    "metrics_file": "metrics.csv",
+    "metrics_sha256": "19b569f7c2bdf73d95a92b36b6000c15b60f8682f8272f3ab8cb65d77ff4a374",
+    "producer_git_commit": "f83e1e9fe412485664fac62d9d15c90f8835cc75",
+    "producer_project": "private_precursor_project",
+    "producer_worktree_clean": false,
+    "provenance_note": "The source repository contained uncommitted benchmark-script and digitized-CSV edits. Per-file SHA256 hashes and embedded producer signatures are authoritative for this imported dataset.",
+    "source_summary_sha256": "a5d2e9984f9f5a2fe9256c1dfd71648c842b3ffbfef737e312d4ea987b7fb8f3"
+  },
+  "benchmark_id": "starrett_et_al_2014_mixtures_fig3_ch1p36",
+  "composition": {
+    "species": [
+      "C",
+      "H"
+    ],
+    "stoichiometric_counts": [
+      1.0,
+      1.36
+    ]
+  },
+  "pairs": [
+    "CC",
+    "CH",
+    "HH"
+  ],
+  "publication": {
+    "authors": [
+      "C. E. Starrett",
+      "D. Saumon",
+      "J. Daligault",
+      "S. Hamel"
+    ],
+    "doi": "10.1103/PhysRevE.90.033110",
+    "figure": "3",
+    "journal": "Physical Review E",
+    "pages": "033110",
+    "title": "Integral equation model for warm and hot dense mixtures",
+    "volume": "90",
+    "year": 2014
+  },
+    "reference_data": {
+        "description": "Project-created digitizations of the solid IS-QM curves from the cited figure; two header rows and independent (r, g_ab) column pairs.",
+        "accepted_manuscript_url": "https://link.aps.org/accepted/10.1103/PhysRevE.90.033110",
+        "derived_artifacts_under_same_gate": [
+          "metrics.csv",
+          "generated overlay figures",
+          "generated comparison metric files"
+        ],
+        "digitization_is_derived_data": true,
+        "digitization_provenance": "Imported from a private precursor benchmark snapshot; the extraction tool and date were not recorded in that snapshot.",
+        "doi_url": "https://doi.org/10.1103/PhysRevE.90.033110",
+        "license_concluded": "NOASSERTION",
+        "license_declared": "NOASSERTION",
+        "license_note": "The paper is available as a CHORUS accepted manuscript, but no Creative Commons, open-data, or redistribution license for these independently digitized curves has been identified. The maintainer has chosen to publish the extracted coordinates with attribution and license status NOASSERTION. These values are not covered by the BSD-3-Clause source-code license.",
+        "origin_type": "independent_digitization",
+        "preprint_url": "https://arxiv.org/abs/1408.3548",
+        "public_release_gate": "resolved",
+        "publisher_article_url": "https://journals.aps.org/pre/abstract/10.1103/PhysRevE.90.033110",
+        "redistribution_status": "published_by_maintainer_with_attribution",
+        "release_decision": {
+          "decision_date": "2026-08-10",
+          "decision_maker": "Otter project maintainer",
+          "scope": "the nine Figure 3 digitizations and derived comparison metrics",
+          "rights_note": "This repository-distribution decision does not assert an APS or author-supplied data license."
+        },
+        "source_curves": "solid IS-QM",
+        "source_figure": "3"
+    },
+  "schema_version": "otter_benchmark_manifest_v1",
+  "states": [
+    {
+      "baseline_file": "CH1p36_rho2p94gcc_T20kK_baseline.npz",
+      "baseline_sha256": "fd8bc898c87396e9ae709d38093b8ec9b21fb7068e7275e125d3907f7c0e8170",
+      "hnc_closure_mismatch": 7.771561172376096e-14,
+      "hnc_output_residual": 6.131281207824626e-12,
+      "n_model_points": 814,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho2p94gcc_T20kK.csv",
+      "reference_sha256": "61268878b11db8463ad80cf17acd09854f7942506fec45dc8838e9c69171a27b",
+      "rho_g_cc": 2.94,
+      "root_residual_ha": 1.4200852515688922e-05,
+      "source_cache_filename": "CH1p36_rho2p94gcc_T20kK_d8c6a7fc31a6.npz",
+      "source_cache_sha256": "80c1a4de4da6aa773c3adb77b432768dccdadf4e3885dbce0e96d41bc1d82b79",
+      "temperature_ev": 1.7234666524289999,
+      "temperature_kk": 20
+    },
+    {
+      "baseline_file": "CH1p36_rho2p94gcc_T50kK_baseline.npz",
+      "baseline_sha256": "312ecd8d5ecf9b0a9ee00d1e0d109c2040509ac57c03a19d46c1a948a3d97f25",
+      "hnc_closure_mismatch": 2.6756374893466273e-14,
+      "hnc_output_residual": 4.148044034696256e-12,
+      "n_model_points": 812,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho2p94gcc_T50kK.csv",
+      "reference_sha256": "6469701880e96753e004d32e14097cf5ddb5c4f78e13c17289d7c6fdb831f8d7",
+      "rho_g_cc": 2.94,
+      "root_residual_ha": 6.723493035765138e-06,
+      "source_cache_filename": "CH1p36_rho2p94gcc_T50kK_c50285ed62e1.npz",
+      "source_cache_sha256": "bafe76f2bad50ef284e5d3dde5b72c524f2fb5052ec58aa39006e640f134f906",
+      "temperature_ev": 4.3086666310725,
+      "temperature_kk": 50
+    },
+    {
+      "baseline_file": "CH1p36_rho2p94gcc_T100kK_baseline.npz",
+      "baseline_sha256": "641eeea2f1a12b5b8b495fc76bf09f139cbe820844fa34313abab0d0e0bf53e5",
+      "hnc_closure_mismatch": 1.454392162258955e-13,
+      "hnc_output_residual": 8.234306839775642e-12,
+      "n_model_points": 808,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho2p94gcc_T100kK.csv",
+      "reference_sha256": "a185dc433c74d3a52999cf42941bedcbdbf70dc07a0f4ab7d11a7db04186ea52",
+      "rho_g_cc": 2.94,
+      "root_residual_ha": 1.98859891364922e-06,
+      "source_cache_filename": "CH1p36_rho2p94gcc_T100kK_982a03373e04.npz",
+      "source_cache_sha256": "3e1b1b592d559e46159c0fbe2abaaa67947e53daf236fd8035c1aecb6dc8aa15",
+      "temperature_ev": 8.617333262145,
+      "temperature_kk": 100
+    },
+    {
+      "baseline_file": "CH1p36_rho5p00gcc_T20kK_baseline.npz",
+      "baseline_sha256": "01ace57954e4b41d4081edb2e5b8f3ca054ce9486a9ccc95422eff955a6a8dd9",
+      "hnc_closure_mismatch": 3.9226621950660956e-11,
+      "hnc_output_residual": 3.698173088645428e-10,
+      "n_model_points": 958,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho5p00gcc_T20kK.csv",
+      "reference_sha256": "0c9c27b5fa9bf30d2bfa83981b09cc8f6852dde055c0eb7cb51b517232f658a4",
+      "rho_g_cc": 5.0,
+      "root_residual_ha": 2.7917992585502205e-06,
+      "source_cache_filename": "CH1p36_rho5p00gcc_T20kK_948db196b53e.npz",
+      "source_cache_sha256": "9cbfcc1e681bf065282f20a9ba05b283c6088e2baf63cb221b6415d198a9b5f9",
+      "temperature_ev": 1.7234666524289999,
+      "temperature_kk": 20
+    },
+    {
+      "baseline_file": "CH1p36_rho5p00gcc_T50kK_baseline.npz",
+      "baseline_sha256": "c636c25756d71eb0c605c326cd1aa96920a62a0e3d77ca3a8fbf1eeddb1db386",
+      "hnc_closure_mismatch": 6.574740751830177e-13,
+      "hnc_output_residual": 2.6702560102830457e-11,
+      "n_model_points": 956,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho5p00gcc_T50kK.csv",
+      "reference_sha256": "5c436f88e98eeaf58a3040793579f86fc377f8dd46142ed59cc467a96f2771dc",
+      "rho_g_cc": 5.0,
+      "root_residual_ha": 3.1048477405759556e-06,
+      "source_cache_filename": "CH1p36_rho5p00gcc_T50kK_419854ca1f03.npz",
+      "source_cache_sha256": "480707edd526e1814fb59bee834558f164f268b98454fcd61e9acec028f9dbac",
+      "temperature_ev": 4.3086666310725,
+      "temperature_kk": 50
+    },
+    {
+      "baseline_file": "CH1p36_rho5p00gcc_T100kK_baseline.npz",
+      "baseline_sha256": "884047ec94e6042f776e84f019b5e37c7d0730c60a75d4ba339649b2560ac9b2",
+      "hnc_closure_mismatch": 1.6231460620019789e-13,
+      "hnc_output_residual": 1.7300189011671493e-11,
+      "n_model_points": 954,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho5p00gcc_T100kK.csv",
+      "reference_sha256": "3b71edb5432bd661d21e80cd7702c70e7a309491cccf766136f219b81b49918a",
+      "rho_g_cc": 5.0,
+      "root_residual_ha": 3.7623885185134043e-06,
+      "source_cache_filename": "CH1p36_rho5p00gcc_T100kK_bd70d4d774e2.npz",
+      "source_cache_sha256": "cc5cb778fb8e58fdd27835d2164a8d3c91d4233734bcf49e29b3179b1f4255f6",
+      "temperature_ev": 8.617333262145,
+      "temperature_kk": 100
+    },
+    {
+      "baseline_file": "CH1p36_rho15p00gcc_T20kK_baseline.npz",
+      "baseline_sha256": "02c02c7d0f1dfa07ec431daedde66932f5491779c3f492e1540987586d36436e",
+      "hnc_closure_mismatch": 1.8208989871482117e-11,
+      "hnc_output_residual": 3.9755890961178624e-11,
+      "n_model_points": 1353,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho15p00gcc_T20kK.csv",
+      "reference_sha256": "baa98948809c4a648347594b0feb4014c28a4895e5cac538c8e9c479b54bc6f3",
+      "rho_g_cc": 15.0,
+      "root_residual_ha": 8.142212686745864e-06,
+      "source_cache_filename": "CH1p36_rho15p00gcc_T20kK_eef24d5cb707.npz",
+      "source_cache_sha256": "539d7cb82f3ee952eb6d8bd916e722cd6b83a910ef42c626acff597e7505c76c",
+      "temperature_ev": 1.7234666524289999,
+      "temperature_kk": 20
+    },
+    {
+      "baseline_file": "CH1p36_rho15p00gcc_T50kK_baseline.npz",
+      "baseline_sha256": "f4f71f3bdba947442e8038ff87e72988d9ec9bf7ccd04f95f53b026691d30480",
+      "hnc_closure_mismatch": 3.863576125695545e-14,
+      "hnc_output_residual": 3.725643606160144e-13,
+      "n_model_points": 1352,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho15p00gcc_T50kK.csv",
+      "reference_sha256": "efc79cd043d8a7324d5af1da4efa9275bedd0d813bafd44ccfb15fb47aa757fd",
+      "rho_g_cc": 15.0,
+      "root_residual_ha": 3.331631802883095e-06,
+      "source_cache_filename": "CH1p36_rho15p00gcc_T50kK_cf4833d7890b.npz",
+      "source_cache_sha256": "2feedf26df93261ed655ac964055d5ba4dd47911075d6d0e2495c32e6a67900f",
+      "temperature_ev": 4.3086666310725,
+      "temperature_kk": 50
+    },
+    {
+      "baseline_file": "CH1p36_rho15p00gcc_T100kK_baseline.npz",
+      "baseline_sha256": "c6f323f4c6806066bdcae9a89a6557e560c09b5e791fca44b6c834b9f7e358a4",
+      "hnc_closure_mismatch": 1.3990264502439231e-10,
+      "hnc_output_residual": 4.5219713320213665e-10,
+      "n_model_points": 1352,
+      "reference_file": "../../reference_data/starrett_et_al_2014_mixtures_fig3/fig3_gab_rho15p00gcc_T100kK.csv",
+      "reference_sha256": "8618857454cce66af05e8ded28c06bb6dbb8c325433ca42c2d6f0ad1df839eb3",
+      "rho_g_cc": 15.0,
+      "root_residual_ha": 7.070167957312634e-06,
+      "source_cache_filename": "CH1p36_rho15p00gcc_T100kK_a1d12a0797a5.npz",
+      "source_cache_sha256": "20a222d52c2db6f646b2f612af57fd7f955ab6e20bbe8388517674f7f2127cca",
+      "temperature_ev": 8.617333262145,
+      "temperature_kk": 100
+    }
+  ],
+  "title": "CH1.36 pair-distribution functions from Starrett et al. (2014) mixtures, Fig. 3",
+  "units": {
+    "chemical_potential": "Hartree",
+    "mass_density": "g cm^-3",
+    "number_density": "Bohr^-3",
+    "radius": "Bohr",
+    "temperature_ev": "eV",
+    "temperature_kk": "10^3 K"
+  }
+}

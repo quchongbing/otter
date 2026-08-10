@@ -1,0 +1,121 @@
+{
+  "schema_version": "otter_reference_manifest_v1",
+  "reference_id": "johnson_et_al_2025_two_temperature_al",
+  "title": "Johnson et al. (2025) two-temperature aluminium gii curves",
+  "origin_type": "publication_figure_numerical_extractions_provenance_pending",
+  "redistribution_status": "published_by_maintainer_with_attribution",
+  "license_declared": "NOASSERTION",
+  "public_release_gate": "resolved",
+  "release_decision": {
+    "decision_date": "2026-08-10",
+    "decision_maker": "Otter project maintainer",
+    "scope": "the nine numerical reference files listed in this manifest",
+    "policy": "publish with explicit article, figure-panel, and method attribution and license status NOASSERTION",
+    "rights_note": "This records a repository-distribution decision and does not assert that APS or the authors supplied an open-data license."
+  },
+  "publication": {
+    "citation_key": "JohnsonEtAl2025",
+    "citation": "Z. A. Johnson, N. R. Shaffer, and M. S. Murillo, Physical Review E 112, 025207 (2025)",
+    "doi": "10.1103/5c29-kdx1",
+    "url": "https://doi.org/10.1103/5c29-kdx1",
+    "figure": "Fig. 2(a), Fig. 2(c), and Fig. 2(d)",
+    "omitted_panel": "Fig. 2(b), Te=3 eV, is absent from the local source library",
+    "data_availability": "Data are available from the corresponding author upon reasonable request."
+  },
+  "physical_state": {
+    "element": "Al",
+    "rho_g_cc": 2.7,
+    "ti_ev": 1.0
+  },
+  "units": {
+    "column_1": "Bohr",
+    "column_2": "dimensionless_pair_distribution"
+  },
+  "unit_audit": {
+    "source": "Johnson et al. (2025), Fig. 2 axis label r [au]",
+    "legacy_issue": "The inherited plot_zak.py labelled these unchanged coordinates as angstrom; that label is a plotting bug and no numerical rescaling is applied here."
+  },
+  "method_labels": {
+    "AA": "2TTCP HNC+bridge",
+    "DFTMD": "DFT-MD",
+    "YOCP": "YOCP HNC+bridge"
+  },
+  "extraction_provenance": {
+    "status": "unresolved",
+    "note": "The inherited local library does not say whether the coordinates were author-provided or digitized from the published figure."
+  },
+  "files": [
+    {
+      "path": "Zak_2025_Al_rho2.7_Te1.0_Ti1.0_AA.csv",
+      "sha256": "2d1a9077446c92e7129fe9535732a41456ff48e51ced5989124fde17add08f16",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(a)",
+      "te_ev": 1.0,
+      "method": "2TTCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te1.0_Ti1.0_DFTMD.csv",
+      "sha256": "db190bb53bb5b67e66f49ec7efb477784c8fa60095eb3a62c986194ba703624b",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(a)",
+      "te_ev": 1.0,
+      "method": "DFT-MD"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te1.0_Ti1.0_YOCP.csv",
+      "sha256": "2d683a4b67908ae28d97027250bd9c1be28cc2ca2600127847e3b0b187b74876",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(a)",
+      "te_ev": 1.0,
+      "method": "YOCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te10.0_Ti1.0_AA.csv",
+      "sha256": "f0ff2fed449bd73018330999b7ad79f721b93bee72ab7bfede8bb76b6b9cd6b1",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(c)",
+      "te_ev": 10.0,
+      "method": "2TTCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te10.0_Ti1.0_DFTMD.csv",
+      "sha256": "9d478541a6977f28e357903fb573539c0df253d5fb2e1c84489efbc420d25e93",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(c)",
+      "te_ev": 10.0,
+      "method": "DFT-MD"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te10.0_Ti1.0_YOCP.csv",
+      "sha256": "fa65959a4e9d5579e85b3f41dcde9bfa323cea11953ee7c41fff1358b73a716f",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(c)",
+      "te_ev": 10.0,
+      "method": "YOCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te30.0_Ti1.0_AA.csv",
+      "sha256": "72dec1a0c6fa8daf208d09b558fef1ea222e99a1877fcadfd6cf78ff16cc4fde",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(d)",
+      "te_ev": 30.0,
+      "method": "2TTCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te30.0_Ti1.0_DFTMD.csv",
+      "sha256": "a4b398fc271ed676834d628880c1694d9268d356e5356c5431b3231ab120c7fc",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(d)",
+      "te_ev": 30.0,
+      "method": "DFT-MD"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te30.0_Ti1.0_YOCP.csv",
+      "sha256": "d72463d244703f33e95235b7ae06aedaedeb94c31af20550fd6fe77eebed142b",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(d)",
+      "te_ev": 30.0,
+      "method": "YOCP HNC+bridge"
+    }
+  ]
+}

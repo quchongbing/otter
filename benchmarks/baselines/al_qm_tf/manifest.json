@@ -1,0 +1,94 @@
+{
+  "schema_version": "otter_benchmark_manifest_v2",
+  "benchmark_id": "al_qm_tf",
+  "status": "accepted",
+  "metrics_file": "metrics.csv",
+  "metrics_sha256": "c21097c4f1991d9512eb29c5da2da16a9bf4f896755cc79eddc5240cdf6555f3",
+  "title": "Aluminium KS-DFT versus finite-temperature Thomas--Fermi at 8.1 g cm^-3",
+  "producer": {
+    "project": "Otter",
+    "git_commit": "4e3cfb2a21fe7e6784e0aa1adaef0fcb2ab41206",
+    "script_relative_path": "benchmarks/runners/regenerate_al_qm_tf.py",
+    "script_sha256": "4084ac63e88efb2524b31d92c59ba7b336982fd46f8f33b78941de14957356b4",
+    "worktree_clean_at_generation": true,
+    "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "note": "The commit identifies HEAD only. If worktree_clean_at_generation is false, the script checksum and status hash document that uncommitted source was involved; the commit alone is not a reproducible producer snapshot."
+  },
+  "configuration": {
+    "rho_g_cc": 8.1,
+    "temperatures_ev": [
+      1.0,
+      15.0,
+      50.0,
+      100.0
+    ],
+    "models": [
+      "qm",
+      "tf"
+    ],
+    "structure_model": "IS",
+    "aa_n_points": 1024,
+    "bound_occ_mode": "fd",
+    "bound_rmax_mult": null,
+    "bound_zero_tail_refine": false,
+    "b3_tail_model": "full",
+    "qoz_n_points_before_padding": 4096,
+    "lfc_model": "chabrier1990",
+    "hnc_tolerance": 1e-06,
+    "hnc_transform_closure_tolerance": 0.001,
+    "hnc_max_iterations": 1000
+  },
+  "method_references": [
+    {
+      "role": "average_atom_pseudoatom_qoz_hnc_and_qm_tf_models",
+      "citation": "C. E. Starrett and D. Saumon, High Energy Density Physics 10, 35-42 (2014)",
+      "doi": "10.1016/j.hedp.2013.12.001"
+    },
+    {
+      "role": "finite_temperature_jellium_lfc",
+      "citation": "G. Chabrier, Journal de Physique 51, 1607-1632 (1990)",
+      "doi": "10.1051/jphys:0199000510150160700"
+    }
+  ],
+  "units": {
+    "radius": "Bohr",
+    "wavenumber": "Bohr^-1",
+    "electronic_density": "Bohr^-3",
+    "effective_pair_potential_r": "Hartree",
+    "effective_pair_potential_k": "Hartree Bohr^3",
+    "temperature": "eV",
+    "mass_density": "g cm^-3",
+    "gii_and_sii": "dimensionless"
+  },
+  "data_rights": {
+    "origin_type": "project_generated_numerical_output",
+    "third_party_reference_data_included": false,
+    "method_citations_only": true
+  },
+  "states": [
+    {
+      "rho_g_cc": 8.1,
+      "temperature_ev": 1.0,
+      "data_file": "Al_rho8p1gcc_T1eV_qm_tf.npz",
+      "data_sha256": "88570c698baee1207f789af14aac55a5595af32f58aa6ea0718dce19cd5e9ac9"
+    },
+    {
+      "rho_g_cc": 8.1,
+      "temperature_ev": 15.0,
+      "data_file": "Al_rho8p1gcc_T15eV_qm_tf.npz",
+      "data_sha256": "782838511b9c0426c541253edc20ec918c721bf152bf07a69fd55e5bc34cd2ee"
+    },
+    {
+      "rho_g_cc": 8.1,
+      "temperature_ev": 50.0,
+      "data_file": "Al_rho8p1gcc_T50eV_qm_tf.npz",
+      "data_sha256": "e21e1cdd0d6003bf523be38fbd71d961f6823db08d62f87c810dccda0a46c5a4"
+    },
+    {
+      "rho_g_cc": 8.1,
+      "temperature_ev": 100.0,
+      "data_file": "Al_rho8p1gcc_T100eV_qm_tf.npz",
+      "data_sha256": "566496c82c0180d704a944c6da4872644126edff33ec8567fa5f750770585a68"
+    }
+  ]
+}

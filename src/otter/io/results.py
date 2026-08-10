@@ -5,9 +5,11 @@ I/O helpers for saving full/external electronic-structure runs.
 
 This module writes one self-contained NPZ file that includes:
 - radial profiles (n_ion, n_cont, n_full, ...),
+- optional SC feedback profiles (g_ii_background, v_corr_full, v_corr_ext),
 - serialized metadata (`meta_json`),
 - selected scalar metadata entries as `meta_<key>` fields.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +18,8 @@ import json
 import re
 
 import numpy as np
+
+from otter.io._npz import save_npz_atomic
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -47,6 +51,30 @@ def _safe_token(text: str) -> str:
     token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(text).strip())
     token = token.strip("._")
     return token or "run"
+
+
+def _metadata_scalar_array(value: Any) -> np.ndarray:
+    """Return a scalar NPZ value without ever creating an object dtype."""
+    if value is None:
+        return np.asarray("null")
+    return np.asarray(value)
+
+
+def _history_array(values: list[Any]) -> np.ndarray:
+    """Encode one history column as float data or fixed-width JSON strings."""
+    try:
+        return np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        encoded = [
+            json.dumps(
+                _to_jsonable(value),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for value in values
+        ]
+        return np.asarray(encoded, dtype=str)
 
 
 def save_full_external_data(
@@ -108,6 +136,11 @@ def save_full_external_data(
         "v_scf",
         "v_xc",
         "v_H",
+        # Optional Starrett--Saumon Sec. 2.4 SC inputs retained separately
+        # from the Hartree/XC decomposition.
+        "g_ii_background",
+        "v_corr_full",
+        "v_corr_ext",
         "n_ext",
         "n_scr",
         "v_ext",
@@ -120,6 +153,7 @@ def save_full_external_data(
         "bound_fdm",
         "bound_occ_deg_fd",
         "bound_occ_deg_fdm",
+        "bound_q_ion_ws",
         # DOS arrays.
         "dos_energy_ha",
         "dos_bound",
@@ -150,9 +184,9 @@ def save_full_external_data(
     if isinstance(meta_jsonable, dict):
         for k, v in meta_jsonable.items():
             if isinstance(v, (int, float, bool, str)) or v is None:
-                payload[f"meta_{k}"] = np.array(v)
+                payload[f"meta_{k}"] = _metadata_scalar_array(v)
 
-    np.savez_compressed(data_path, **payload)
+    save_npz_atomic(data_path, payload)
     return {"data_npz": str(data_path)}
 
 
@@ -174,7 +208,6 @@ def _interp_profile_linear(
     left = float(y_src[0])
     right = float(y_src[-1]) if right_value is None else float(right_value)
     return np.interp(r_dst, r_src, y_src, left=left, right=right)
-
 
 
 def save_mixture_data(
@@ -239,10 +272,7 @@ def save_mixture_data(
         keys = sorted({str(k) for row in hist for k in row.keys()})
         for key in keys:
             vals = [row.get(key, np.nan) for row in hist]
-            try:
-                payload[f"history_{key}"] = np.asarray(vals, dtype=float)
-            except Exception:
-                payload[f"history_{key}"] = np.asarray(vals, dtype=object)
+            payload[f"history_{key}"] = _history_array(vals)
 
     species_entries = list(result.get("species", []))
     if len(species_entries) < 2:
@@ -269,6 +299,9 @@ def save_mixture_data(
             "v_H",
             "v_xc",
             "v_ext",
+            "g_ii_background",
+            "v_corr_full",
+            "v_corr_ext",
         ):
             if key in final:
                 payload[f"{symbol}_{key}_native"] = np.asarray(final[key], dtype=float)
@@ -289,7 +322,9 @@ def save_mixture_data(
         payload[f"{symbol}_r_ws_bohr"] = np.array(sp["r_ws_bohr"])
 
     if save_common_linear_grid:
-        r_linear = np.linspace(float(common_rmin), float(common_rmax), int(linear_n_points))
+        r_linear = np.linspace(
+            float(common_rmin), float(common_rmax), int(linear_n_points)
+        )
         payload["r_linear_common"] = r_linear
         for symbol, final in native_profiles.items():
             n0_val = float(final.get("n0", 0.0))
@@ -303,6 +338,9 @@ def save_mixture_data(
                 "v_H": 0.0,
                 "v_xc": 0.0,
                 "v_ext": 0.0,
+                "g_ii_background": 1.0,
+                "v_corr_full": 0.0,
+                "v_corr_ext": 0.0,
             }
             r_src = np.asarray(final["r"], dtype=float)
             for key, right_value in interp_rules.items():
@@ -322,7 +360,7 @@ def save_mixture_data(
     if isinstance(meta_jsonable, dict):
         for k, v in meta_jsonable.items():
             if isinstance(v, (int, float, bool, str)) or v is None:
-                payload[f"meta_{k}"] = np.array(v)
+                payload[f"meta_{k}"] = _metadata_scalar_array(v)
 
-    np.savez_compressed(data_path, **payload)
+    save_npz_atomic(data_path, payload)
     return {"data_npz": str(data_path)}

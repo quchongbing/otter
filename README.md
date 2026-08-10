@@ -1,129 +1,183 @@
-# otter
+# Otter
 
-`otter` is a Python code for calculating the electronic and ionic structure of
-dense plasmas. Given a composition, mass density, electron temperature `Te`,
-and optional ion temperature `Ti`, it solves an average-atom electronic
-structure problem and computes ion-ion pair correlation functions `g_ij(r)` and
-structure factors `S_ij(k)`.
+Otter calculates electronic and ionic structure in warm and hot dense matter.
+From composition, mass density, and temperature it can solve a quantum
+average-atom or finite-temperature Thomas–Fermi model, construct neutral
+pseudoatoms, build effective ion–ion potentials, and solve one- or
+multicomponent QOZ/HNC equations.
 
-The code is based on the average-atom, pseudoatom, and ionic-structure
-framework developed by Starrett and Saumon. It solves the full/external
-average-atom problem, builds the pseudoatom screening density `n_scr(r)`,
-constructs effective ion-ion potentials `V_ij(k)`, and solves the QOZ/HNC
-equations for the ionic structure. The electronic outputs also provide the
-density components needed to construct XRTS-related form-factor quantities such
-as `q(k) + f(k)`.
+The implementation follows the average-atom and pseudoatom framework of
+Starrett and collaborators. Model choices, charge closure, nonlinear-solver
+status, and validation metadata remain visible in the result.
 
-## Layout
+[Documentation](https://quchongbing.github.io/otter/) ·
+[Example gallery](https://quchongbing.github.io/otter/gen_examples/) ·
+[Scientific benchmarks](https://quchongbing.github.io/otter/benchmarks/gen_benchmarks/)
 
-```text
-src/otter/
-  workflows.py                  # high-level composition -> AA -> QOZ/HNC API
-  data/                         # element data and density helpers
-  numerics/                     # constants, radial grids, interpolation, transforms
-  electronic/
-    ks_dft.py                   # electronic AA overview/orchestration layer
-    densities.py                # bound density, n_ion, cutoff, electron counts
-    full_external.py            # full -> external workflow driver
-    mixture.py                  # multicomponent electronic closure
-    potential.py                # Hartree + Starrett full/external potentials
-    xc.py                       # exchange-correlation models
-    continuum/                  # continuum density and tail machinery
-    solvers/
-      bound.py                  # bound-state Numerov solver
-      free.py                   # free-state Numerov propagation kernels
-  ionic/
-    qoz.py                      # QOZ effective potentials and HNC solvers
-    response.py                 # jellium response / local field corrections
-    correlation.py              # ion-sphere correlation model
-  io/
-    results.py                  # core NPZ result writers
-```
+> **Status:** Otter is under active development. A converged numerical solve
+> is not, by itself, evidence that an average-atom/HNC model is applicable to a
+> new thermodynamic regime. Use convergence diagnostics and benchmarks.
+
+## Capabilities
+
+- orbital Kohn–Sham full/external average atoms;
+- finite-temperature Thomas–Fermi full/external average atoms;
+- pressure-ionization, weak-bound-state, continuum phase-shift, and B3/Friedel
+  tail diagnostics;
+- single-species and general-mixture common-chemical-potential construction;
+- finite-temperature Lindhard response and several local-field corrections,
+  with Chabrier (1990) as the validated production default;
+- charge-closed one- and multicomponent QOZ effective potentials;
+- HNC solvers that reject unconverged or projected nonphysical roots;
+- portable, pickle-free `q(k)`, `f(k)`, `g_ij(r)`, and `S_ij(k)` state files;
+- cached, provenance-checked literature and model-sensitivity benchmarks.
+
+The AA ↔ QOZ/HNC self-consistent feedback loop is deliberately isolated under
+`otter.experimental`; the ion-sphere construction is the production workflow.
 
 ## Install
 
-`otter` requires Python `>=3.12`. Clone the repository and enter the project
-directory first:
+Otter requires Python 3.12 or newer.
 
 ```bash
-git clone <repository-url> otter
+git clone https://github.com/quchongbing/otter.git
 cd otter
-```
-
-For development, install the package in editable mode with `pip install -e .`.
-The `-e` flag makes local source-code changes immediately visible to Python
-without reinstalling the package.
-
-### Conda
-
-```bash
-conda create -n otter python=3.12 -y
-conda activate otter
-
-pip install -e .
-```
-
-Verify the install:
-
-```bash
-python - <<'PY'
-from otter import PlasmaWorkflowConfig
-
-cfg = PlasmaWorkflowConfig(elements=["C"], temperature_ev=10.0, rho_g_cc=1.0)
-print("otter import ok")
-print(cfg)
-PY
-```
-
-### Python venv
-
-```bash
-python3.12 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
-
 python -m pip install --upgrade pip
-pip install -e .
+python -m pip install -e .
 ```
 
-### Poetry
-
-The current project uses standard `pyproject.toml` metadata with a setuptools
-backend. With Poetry, use Poetry to create and manage the virtual environment,
-then install the local package in editable mode inside that environment:
+Plotting examples require the optional plotting extra:
 
 ```bash
-poetry env use python3.12
-poetry run python -m pip install --upgrade pip
-poetry run pip install -e .
+python -m pip install -e ".[plot]"
 ```
 
-### Run Tests
+All maintained Otter plots use the shared `otter.plotting` style and export
+both a 300 dpi PNG for screens and a vector PDF for papers or slides.
 
-To run the lightweight test suite, install the optional development
-dependencies and call `pytest`:
+For tests or documentation, use `.[dev]` or `.[docs]`.
 
-```bash
-pip install -e ".[dev]"
-pytest -q
-```
+## Quick start
 
-## Minimal Use
+The same high-level interface handles one component or a mixture. With
+`ion_temperature_ev` set, the workflow continues through QOZ/HNC:
 
 ```python
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
 
-result = solve_plasma_workflow(
-    PlasmaWorkflowConfig(
-        elements=["C"],
-        temperature_ev=50.0,
-        rho_g_cc=1.0,
-        ion_temperature_ev=50.0,
-    )
+config = PlasmaWorkflowConfig(
+    elements=["C", "H"],
+    counts=[1.0, 1.36],
+    temperature_ev=8.617333,      # 100 kK
+    ion_temperature_ev=8.617333,
+    rho_g_cc=2.94,
 )
+result = solve_plasma_workflow(config)
+
+electronic = result["electronic"]["result"]
+ionic = result["ion"]
+g_cc = ionic["gij_r"][0, 0]
+s_cc = ionic["sij_k"][0, 0]
 ```
 
-## References
+Select the Thomas–Fermi backend with `electronic_model="tf"`. The default
+`"qm"` backend retains orbital shell structure.
 
-- C. E. Starrett and D. Saumon, *A simple method for determining the ionic structure of warm dense matter*, High Energy Density Physics 10, 35-42 (2014), https://doi.org/10.1016/j.hedp.2013.12.001
+### Save `q/f/g/S`
 
-- C. E. Starrett and D. Saumon, *Electronic and ionic structures of warm and hot dense matter*, Phys. Rev. E 87, 013104 (2013), https://doi.org/10.1103/PhysRevE.87.013104
+```python
+config = PlasmaWorkflowConfig(
+    elements=["C"],
+    temperature_ev=100.0,
+    ion_temperature_ev=100.0,
+    rho_g_cc=3.7,
+    save_state_npz=True,
+    save_state_path="outputs/carbon_state.npz",
+)
+result = solve_plasma_workflow(config)
+```
+
+The versioned NPZ schema stores:
+
+- `q_k == n_scr_k` and `f_k == n_ion_k`;
+- `gij_r`, `sij_k`, and (when available) `vij_k`;
+- species ordering, units, model settings, and convergence metadata.
+
+Its default exclusive windows are `r < 20 Bohr` and
+`k < 20 Bohr^-1`; it loads with `allow_pickle=False` and is atomically written
+only after a successful archive is complete.
+
+Quantum continuum calculations can take minutes or longer near pressure
+ionization. `continue_plasma_workflow_from_electronic_result` reuses an
+already validated electronic result while iterating on downstream QOZ/HNC
+controls.
+
+## Validation and documentation
+
+The documentation connects equations to implementation, records validity
+limits, and redraws compact cached benchmarks without rerunning expensive
+average-atom calculations:
+
+**Online documentation:** https://quchongbing.github.io/otter/
+
+```bash
+python -m pip install -e ".[docs]"
+make -C docs strict
+```
+
+Open `docs/build/html/index.html` after the build. Start with:
+
+- [documentation source](docs/source/index.rst);
+- [capability example gallery](docs/examples/README.rst);
+- [scientific benchmark gallery](docs/source/benchmarks/index.rst);
+- [validation policy](docs/source/benchmarks/validation_policy.rst);
+- [portable state schema](docs/source/user_guide/state_exports.rst);
+- [migration ledger](docs/source/development/migration.rst);
+- [development roadmap](docs/source/development/roadmap.rst).
+
+Digitized publication curves and author-provided numerical data have separate
+provenance and rights manifests; they are not covered by Otter's BSD software
+license unless a dataset explicitly says otherwise.  The current bundled
+reference sets are published by maintainer decision with source attribution
+and license status `NOASSERTION`.  Read the
+[reference-data notice](benchmarks/reference_data/README.md) before reuse.
+The executable gate `python tools/check_public_release.py` rejects any future
+manifest that reintroduces an unresolved public-release action.
+
+## Development
+
+```bash
+python -m pip install -e ".[dev,docs]"
+pytest -q
+make -C docs strict
+python -m build
+python -m twine check dist/*
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for numerical and benchmark review
+requirements and [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
+
+## Citation
+
+Use [CITATION.cff](CITATION.cff) to cite the software, and cite the primary
+model papers listed in the documentation for the features used. The central
+method reference is:
+
+C. E. Starrett and D. Saumon, “A simple method for determining the ionic
+structure of warm dense matter,” *High Energy Density Physics* **10**, 35–42
+(2014), [doi:10.1016/j.hedp.2013.12.001](https://doi.org/10.1016/j.hedp.2013.12.001).
+
+Runs using optional Libxc functionals must additionally cite Libxc and every
+selected functional. Otter records the installed Libxc version, exact
+functional IDs, and Libxc-provided references in `xc_provenance`; see the
+[XC citation guide](docs/source/user_guide/xc_functionals.rst).
+
+The repository-wide citation contract is documented in
+[`CITATIONS.md`](CITATIONS.md). Runtime configuration objects provide
+`config.citation(style="plain"|"bibtex"|"cite")` and expose their canonical
+`citation_keys`, so reports can record exactly which physical models were
+selected.
+
+Otter is distributed under the [BSD 3-Clause License](LICENSE).

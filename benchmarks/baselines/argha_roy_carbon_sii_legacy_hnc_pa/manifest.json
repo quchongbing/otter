@@ -1,0 +1,80 @@
+{
+  "schema_version": "otter_legacy_curve_manifest_v1",
+  "benchmark_id": "argha_roy_carbon_sii_legacy_hnc_pa",
+  "title": "Historical PAMD HNC-PA carbon structure-factor curves",
+  "scientific_status": "historical_figure_reproduction_only",
+  "origin_type": "legacy_project_generated_numerical_output",
+  "method_label": "HNC-PA",
+  "not_current_otter_baseline": true,
+  "controller": {
+    "script_relative_path": "benchmarks/examples/plot_argha_roy_carbon_sii.py",
+    "current_controller_sha256": "009f4f7427b976623bf6a26af45511b3d05d3e5c8bf509b6118e9c94512da7b8"
+  },
+  "diagnostic_limitations": {
+    "hnc_residual": "not recorded in the source archives",
+    "transform_closure": "not recorded in the source archives",
+    "modern_reliability_gate": "not available",
+    "policy": "Do not describe these curves as current strict Otter results."
+  },
+  "conversion": {
+    "source_archives": "legacy PAMD NPZ files",
+    "source_arrays": ["k", "s_ii"],
+    "source_k_unit": "Bohr^-1",
+    "stored_k_unit": "Bohr^-1",
+    "display_k_unit": "angstrom^-1",
+    "bohr_to_angstrom": 0.529177210903,
+    "retention": "all points through the first point above 12 angstrom^-1",
+    "pickle_policy": "source object metadata omitted; output loads with allow_pickle=False"
+  },
+  "state": {
+    "element": "C",
+    "rho_g_cc": 3.51538
+  },
+  "states": [
+    {
+      "state_id": "legacy_pamd_c_rho3p51538_te020_ti020",
+      "te_ev": 20.0,
+      "ti_ev": 20.0,
+      "source_archive": "PAMD_Sii_C_rho3.51538_Te20_Ti20.npz",
+      "source_archive_sha256": "d6bc95e3762937e4ef68f32e09a7fd42e4b08907fbfe778c99f3006a66d55f32",
+      "baseline_file": "legacy_pamd_c_rho3p51538_te020_ti020.npz",
+      "baseline_sha256": "15e08ab1cadd4bbf6ec4aad5ee8189fc2a281730df755925748db4752b5b9dca"
+    },
+    {
+      "state_id": "legacy_pamd_c_rho3p51538_te030_ti030",
+      "te_ev": 30.0,
+      "ti_ev": 30.0,
+      "source_archive": "PAMD_Sii_C_rho3.51538_Te30_Ti30.npz",
+      "source_archive_sha256": "0294e14940caa7b618ac8a3f15362216596d5a9b9d5a3545ca71d0ac801f81bf",
+      "baseline_file": "legacy_pamd_c_rho3p51538_te030_ti030.npz",
+      "baseline_sha256": "1b41c5bad453e79c2715aead2ca8003882214dc8af24b003f1a9da9c9c408086"
+    },
+    {
+      "state_id": "legacy_pamd_c_rho3p51538_te040_ti040",
+      "te_ev": 40.0,
+      "ti_ev": 40.0,
+      "source_archive": "PAMD_Sii_C_rho3.51538_Te40_Ti40.npz",
+      "source_archive_sha256": "4327206d925d55593f823c383d57a97967e321eb74d7b8a2121e9d6b58e9e67b",
+      "baseline_file": "legacy_pamd_c_rho3p51538_te040_ti040.npz",
+      "baseline_sha256": "24025d87bf43b28f54f7375122c72a85a15e93c9ebac2aacddb5f7d45769d0a4"
+    },
+    {
+      "state_id": "legacy_pamd_c_rho3p51538_te050_ti050",
+      "te_ev": 50.0,
+      "ti_ev": 50.0,
+      "source_archive": "PAMD_Sii_C_rho3.51538_Te50_Ti50.npz",
+      "source_archive_sha256": "6bd19bc6792f3f16092c597a46ecbe524b27b95a501a1c6468c348f034086178",
+      "baseline_file": "legacy_pamd_c_rho3p51538_te050_ti050.npz",
+      "baseline_sha256": "214ecf31a3a892ba61b4aafb02ca2b7fc36af4a07725b46d7240521f7dfa8dab"
+    },
+    {
+      "state_id": "legacy_pamd_c_rho3p51538_te100_ti100",
+      "te_ev": 100.0,
+      "ti_ev": 100.0,
+      "source_archive": "PAMD_Sii_C_rho3.51538_Te100_Ti100.npz",
+      "source_archive_sha256": "4b8c3c7c42c9f7b55c7a344d76279a23a694de31ae9d1abe01718aabc8f0477c",
+      "baseline_file": "legacy_pamd_c_rho3p51538_te100_ti100.npz",
+      "baseline_sha256": "7e0e2b7032b08c99bf471bf86521d9dbda28c3db50a8a6f8349304125f698b7f"
+    }
+  ]
+}

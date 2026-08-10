@@ -1,0 +1,30 @@
+include LICENSE
+include README.md
+include CITATION.cff
+include CHANGELOG.md
+include CONTRIBUTING.md
+include SECURITY.md
+
+graft docs
+graft examples
+graft tests
+graft tools
+
+# Source archives are self-contained.  Literature-derived and author-provided
+# values retain their dataset-level attribution and ``NOASSERTION`` license
+# status; Otter's BSD-3-Clause software license does not apply to them.
+graft benchmarks
+
+prune docs/build
+prune docs/source/_autosummary
+prune docs/source/gen_examples
+prune docs/source/gen_modules
+prune docs/source/benchmarks/gen_benchmarks
+prune benchmarks/outputs
+
+exclude docs/source/sg_execution_times.rst
+
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store

@@ -10,14 +10,23 @@ Starrett et al. (2014):
   (1) all average atoms share one electron chemical potential
   (2) the per-species ion-sphere volumes satisfy the mixture volume sum rule
 
-The implementation keeps the AA work itself unchanged. The only new outer loop
-solves for positive per-species volume weights and then reuses the existing
+The implementation keeps the AA work itself unchanged. The outer loop solves
+for positive per-species volume weights and then reuses the existing
 single-species `FullExternalConfig` solver for each component.
+
+Reference
+---------
+C. E. Starrett, D. Saumon, J. Daligault, and S. Hamel, Physical Review E
+90, 033110 (2014), DOI 10.1103/PhysRevE.90.033110.  The shared chemical
+potential and mixture-volume closure are the physical constraints of that
+work.  Softmax coordinates, interpolation-based warm starts, threshold-state
+retries, and the bracketed/surrogate root machinery are Otter numerical
+methods and should not be attributed to the paper.
 """
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,12 +37,13 @@ from otter.numerics.grids import create_sqrt_grid
 from otter.data.elements import element as element_info
 from otter.data.helpers import ion_density_bohr3
 from otter.io import save_mixture_data
-from .full_external import (
+from otter.electronic.full_external import (
     FullExternalConfig,
     _resolve_outer_geometry,
     solve_full_only,
     solve_full_then_external,
 )
+from otter.literature import CitationMixin, citation_keys_for_xc_model
 
 
 _FORBIDDEN_SPECIES_KEYS = {
@@ -230,6 +240,157 @@ def _copy_result_payload(result: dict[str, Any]) -> dict[str, Any]:
         else:
             copied[key] = value
     return copied
+
+
+def _species_result_eligibility(
+    result: dict[str, Any],
+    *,
+    require_external: bool = False,
+) -> tuple[bool, tuple[str, ...]]:
+    """Return whether one AA result is safe to reuse, plus rejection reasons.
+
+    A production AA point is root-eligible only when its final full stage
+    converged, its chemical potential is finite, and the shallowest negative
+    level is not explicitly diagnosed as numerically unresolved.  The last
+    condition is important near pressure ionization: a box-dependent bound
+    state can otherwise create a discontinuous sign change that a common-``mu``
+    solver mistakes for a physical root.
+
+    Missing convergence, chemical-potential, and threshold-diagnostic fields
+    remain accepted for compatibility with old saved payloads and lightweight
+    analytic/mock evaluators.  Real full-AA results always supply the first two
+    fields, and current results also supply ``threshold_state_status``.  An old
+    external payload that predates ``ext_status`` remains eligible when it
+    already contains the required ``n_scr`` profile.
+
+    When ``require_external`` is true, the fixed-``mu`` external branch must
+    also be present, enabled, and converged.  This stronger form is used at the
+    AA -> QOZ/HNC boundary, not during the full-only common-``mu`` root solve.
+    """
+    reasons: list[str] = []
+
+    marker = result.get("stage2_converged", result.get("converged", None))
+    if marker is not None and not bool(marker):
+        reasons.append("stage2_unconverged")
+
+    if "mu" in result:
+        try:
+            mu_value = float(result["mu"])
+        except (TypeError, ValueError):
+            mu_value = np.nan
+        if not np.isfinite(mu_value):
+            reasons.append("mu_nonfinite")
+
+    threshold_status = result.get("threshold_state_status", None)
+    if threshold_status is None:
+        bound_diag = result.get("bound_state_diagnostics", None)
+        if isinstance(bound_diag, dict):
+            threshold_status = bound_diag.get("shallowest_status", None)
+    if threshold_status is not None and str(threshold_status).strip().lower() == "unresolved":
+        reasons.append("threshold_state_unresolved")
+
+    result_meta = result.get("meta", {})
+    result_meta = dict(result_meta) if isinstance(result_meta, dict) else {}
+    b3_mode = str(result_meta.get("b3_tail_stage2_mode", "")).strip().lower()
+    b3_target = str(result_meta.get("b3_tail_target", "")).strip().lower()
+    full_tail_meta = result.get("n_full_tail_meta", None)
+    if (
+        b3_mode == "in_scf"
+        and b3_target in ("full", "both")
+        and isinstance(full_tail_meta, dict)
+        and full_tail_meta.get("applied", None) is False
+    ):
+        reasons.append("b3_full_tail_unapplied")
+
+    if require_external:
+        b3_post_diagnostic = (
+            result.get("b3_post_self_consistent", None) is False
+            or str(result_meta.get("b3_tail_stage2_mode", "")).strip().lower() == "post"
+        )
+        if b3_post_diagnostic:
+            reasons.append("b3_post_diagnostic_only")
+        ext_tail_meta = result.get("n_ext_tail_meta", None)
+        if (
+            b3_mode == "in_scf"
+            and b3_target in ("full", "both")
+            and isinstance(ext_tail_meta, dict)
+            and ext_tail_meta.get("applied", None) is False
+        ):
+            reasons.append("b3_external_tail_unapplied")
+        ext_raw = result.get("ext_status", None)
+        if not isinstance(ext_raw, dict) or not ext_raw:
+            if "n_scr" not in result:
+                reasons.append("external_status_missing")
+        else:
+            ext_status = dict(ext_raw)
+            if not bool(ext_status.get("enabled", True)):
+                reasons.append("external_disabled")
+            elif not bool(ext_status.get("converged", False)):
+                reasons.append("external_unconverged")
+
+    return len(reasons) == 0, tuple(reasons)
+
+
+def _species_result_is_converged(result: dict[str, Any]) -> bool:
+    """Compatibility wrapper for full-AA root/cache eligibility."""
+    eligible, _ = _species_result_eligibility(result)
+    return bool(eligible)
+
+
+def _record_species_results_are_converged(record: dict[str, Any]) -> bool:
+    """Return True only when every species solve in a mixture point converged."""
+    results = list(record.get("results", []))
+    return bool(results) and all(_species_result_is_converged(dict(result)) for result in results)
+
+
+def _b3_tail_meta_for_target(
+    result: dict[str, Any],
+    *,
+    b3_tail_target: str,
+) -> tuple[dict[str, Any], str]:
+    """Return the B3 fit metadata that owns the requested density target.
+
+    ``b3_tail_target='full'`` and ``'both'`` fit the total-density tail, whose
+    selected model is recorded in ``n_full_tail_meta``.  The historical
+    continuum target records it in ``n_cont_tail_meta``.  Old or partially
+    reconstructed payloads can contain only the other dictionary, so the
+    secondary key remains a compatibility fallback.  A primary dictionary
+    without ``model_selected`` does not mask a usable secondary dictionary.
+    """
+    target = str(b3_tail_target).strip().lower()
+    if target in ("full", "both"):
+        keys = ("n_full_tail_meta", "n_cont_tail_meta")
+    else:
+        keys = ("n_cont_tail_meta", "n_full_tail_meta")
+
+    first_meta: dict[str, Any] = {}
+    first_source = ""
+    for key in keys:
+        raw = result.get(key, {})
+        meta = dict(raw) if isinstance(raw, dict) else {}
+        if not first_source and meta:
+            first_meta = meta
+            first_source = str(key)
+        if str(meta.get("model_selected", "")).strip():
+            return meta, str(key)
+    return first_meta, first_source
+
+
+def _species_result_quality(result: dict[str, Any]) -> float:
+    """Return a finite late-SCF error used to rank nearby warm-start samples."""
+    history = list(result.get("history", []))
+    if not history:
+        return 0.0
+    final = dict(history[-1])
+    errors: list[float] = []
+    for key in ("err", "dn_rel", "dv_rel"):
+        try:
+            value = abs(float(final.get(key, np.nan)))
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value):
+            errors.append(value)
+    return max(errors, default=0.0)
 
 
 def _project_monotone_decreasing(values: np.ndarray) -> np.ndarray:
@@ -777,9 +938,11 @@ def _record_species_samples(
     """
     volumes = np.asarray(record["volumes_bohr3"], dtype=float)
     mu_vals = np.asarray(record["mu_ha"], dtype=float)
-    residual = np.asarray(record["mu_residual_ha"], dtype=float)
-    quality = float(np.max(np.abs(residual))) if residual.size > 0 else 0.0
+    results = list(record.get("results", []))
     for idx in range(len(species_samples)):
+        if idx >= len(results) or not _species_result_is_converged(dict(results[idx])):
+            continue
+        quality = _species_result_quality(dict(results[idx]))
         volume_here = float(volumes[idx])
         mu_here = float(mu_vals[idx])
         duplicate = False
@@ -801,7 +964,7 @@ def _record_species_samples(
 
 
 @dataclass
-class MixtureConfig:
+class MixtureConfig(CitationMixin):
     """
     Common-`mu_e` AA solve for an arbitrary number of species.
 
@@ -821,6 +984,9 @@ class MixtureConfig:
     species_overrides
         Optional mapping from element symbol to extra AA overrides for that
         component only.
+    allow_unconverged_root
+        Diagnostic escape hatch. The production default raises when the
+        common-chemical-potential residual remains above `mu_e_tol`.
 
     Returns
     -------
@@ -848,7 +1014,26 @@ class MixtureConfig:
 
     mu_e_tol: float = 1e-4
     root_tol: float = 1e-4
+    # Primary seed/surrogate budget.  For a binary this bounds accepted AA
+    # samples before the separate Brent allowance below.  For N>2 it bounds
+    # surrogate iterations, not the total number of per-species AA solves;
+    # later guarded local/global refinements have their own bounded calls.
     root_maxfev: int = 20
+    root_brent_maxiter: int = 16
+    # Once a true binary sign-change bracket has been observed, allow this
+    # separate number of bracket-refinement iterations.  Seed/surrogate AA
+    # evaluations can otherwise consume root_maxfev just before Brent obtains
+    # the bracket, which used to produce a false "budget exhausted" failure.
+    root_threshold_b3_surrogate_mode: str = "a_only_when_full_unresolved"
+    # Pressure-ionization safeguard used only while locating the common-mu
+    # root:
+    #   "off" -> every root sample must use the requested B3 model
+    #   "a_only_when_full_unresolved" -> when a requested full-B3 solve remains
+    #       threshold-unresolved after its cold retry, permit one A-only solve
+    #       as a numerical theta surrogate.  Such a result is never a
+    #       production answer; solve_mixture_full_only must verify the final
+    #       theta with the originally requested full model.
+    allow_unconverged_root: bool = False
     cache_round_digits: int = 12
     show_progress: bool = False
     show_mu_progress: bool = False
@@ -881,6 +1066,14 @@ class MixtureConfig:
             raise ValueError("root_tol must be positive.")
         if int(self.root_maxfev) < 4:
             raise ValueError("root_maxfev must be at least 4.")
+        if int(self.root_brent_maxiter) < 1:
+            raise ValueError("root_brent_maxiter must be at least 1.")
+        surrogate_mode = str(self.root_threshold_b3_surrogate_mode).strip().lower()
+        if surrogate_mode not in ("off", "a_only_when_full_unresolved"):
+            raise ValueError(
+                "root_threshold_b3_surrogate_mode must be 'off' or "
+                "'a_only_when_full_unresolved'."
+            )
         if int(self.species_parallel_jobs) < 1:
             raise ValueError("species_parallel_jobs must be at least 1.")
         if int(self.save_linear_n_points) < 16:
@@ -918,6 +1111,20 @@ class MixtureConfig:
             if np.any(init <= 0.0):
                 raise ValueError("volume_weights_init must be strictly positive.")
 
+    @property
+    def citation_keys(self) -> tuple[str, ...]:
+        """Return papers governing the mixture closure and selected XC model."""
+        keys = ["StarrettEtAl2014", "StarrettSaumon2014"]
+        models = [self.aa_overrides.get("xc_model", "dirac")]
+        models.extend(
+            overrides.get("xc_model")
+            for overrides in self.species_overrides.values()
+            if "xc_model" in overrides
+        )
+        for model in models:
+            keys.extend(citation_keys_for_xc_model(str(model)))
+        return tuple(dict.fromkeys(keys))
+
 
 class _MixtureEvaluator:
     """
@@ -953,6 +1160,9 @@ class _MixtureEvaluator:
         self._species_result_cache: dict[tuple[str, float], dict[str, Any]] = {}
         self._species_result_cache_hits: int = 0
         self._species_result_cache_misses: int = 0
+        self._species_threshold_cold_retries: int = 0
+        self._species_threshold_b3_a_only_retries: int = 0
+        self._species_threshold_b3_root_surrogates: int = 0
         if species_init_cache is not None:
             for symbol, entries in species_init_cache.items():
                 key = str(symbol)
@@ -967,6 +1177,7 @@ class _MixtureEvaluator:
                         },
                     }
                     for one in entries
+                    if _species_result_eligibility(dict(one.get("result", {})))[0]
                 ]
         self._executor: ProcessPoolExecutor | ThreadPoolExecutor | None = None
         jobs = int(cfg.species_parallel_jobs)
@@ -998,6 +1209,12 @@ class _MixtureEvaluator:
         cached = self._species_result_cache.get(cache_key)
         if cached is None:
             return None
+        if not _species_result_eligibility(dict(cached))[0]:
+            # Revalidate on lookup as well as insertion.  This protects long
+            # lived evaluators if a cached payload is annotated as unresolved
+            # after a later reliability pass.
+            self._species_result_cache.pop(cache_key, None)
+            return None
         self._species_result_cache_hits += 1
         return _copy_result_payload(cached)
 
@@ -1007,10 +1224,13 @@ class _MixtureEvaluator:
         symbol: str,
         r_ws_bohr: float,
         result: dict[str, Any],
-    ) -> None:
-        """Store one solved species result in the exact-radius cache."""
+    ) -> bool:
+        """Store one converged species result in the exact-radius cache."""
+        if not _species_result_is_converged(result):
+            return False
         cache_key = self._species_result_cache_key(symbol=str(symbol), r_ws_bohr=float(r_ws_bohr))
         self._species_result_cache[cache_key] = _copy_result_payload(result)
+        return True
 
     def _cached_species_init(
         self,
@@ -1036,8 +1256,10 @@ class _MixtureEvaluator:
         symbol: str,
         r_ws_bohr: float,
         result: dict[str, Any],
-    ) -> None:
+    ) -> bool:
         """Store one converged full result for later nearby warm-start use."""
+        if not _species_result_is_converged(result):
+            return False
         entries = self._species_init_cache.setdefault(str(symbol), [])
         entries.append(
             {
@@ -1050,6 +1272,7 @@ class _MixtureEvaluator:
         )
         if len(entries) > 8:
             del entries[:-8]
+        return True
 
     def close(self) -> None:
         """Release any optional species-level parallel executor."""
@@ -1138,17 +1361,155 @@ class _MixtureEvaluator:
 
         self._species_result_cache_misses += len(miss_results)
         for idx, result_species in zip(miss_indices, miss_results, strict=True):
+            cfg_species = species_cfgs[idx]
+            initial_eligible, initial_reasons = _species_result_eligibility(
+                dict(result_species)
+            )
+            # Near pressure ionization, a nearby converged potential can seed a
+            # different shallow-pole branch even when a cold solve at the same
+            # physical R_ws converges to a valid continuum representation.  Do
+            # not pass the unresolved branch to the common-mu root, but also do
+            # not abort Brent before checking whether the failure is specific
+            # to that warm start.  A cold retry is deliberately restricted to
+            # this diagnosed case; ordinary unconverged AA points retain the
+            # existing fail-safe behavior.
+            cold_retry_attempted = bool(
+                not initial_eligible
+                and "threshold_state_unresolved" in initial_reasons
+                and cfg_species.v_full_init is not None
+            )
+            cold_retry_selected = False
+            cold_result: dict[str, Any] | None = None
+            if cold_retry_attempted:
+                cfg_cold = replace(cfg_species, v_full_init=None)
+                cold_result = _solve_species_from_config(cfg_cold)
+                self._species_result_cache_misses += 1
+                self._species_threshold_cold_retries += 1
+                cold_eligible, cold_reasons = _species_result_eligibility(
+                    dict(cold_result)
+                )
+                if cold_eligible:
+                    result_species = cold_result
+                    cold_retry_selected = True
+                else:
+                    cold_reasons = tuple(cold_reasons)
+            else:
+                cold_reasons = ()
+
+            # Starrett & Saumon (2014), Appendix B, require convergence with
+            # respect to the B3 handoff radius.  In a pressure-ionization
+            # window the oscillatory B3 term can sit on a numerically
+            # unresolved tail and manufacture a remote micro-Hartree pole. If
+            # both the original solve and its optional cold retry remain
+            # unresolved, make one conservative cold retry with the nested
+            # A-only B3 model.
+            #
+            # For an explicit ``auto`` request this retains the historical
+            # audited recovery.  For an explicit/default ``full`` request it
+            # is *only* a root-coordinate surrogate: it may guide the outer
+            # theta search, but it must not enter the requested-model species
+            # cache or be returned without a final full-B3 verification.
+            tail_retry_probe = cold_result if cold_result is not None else result_species
+            tail_probe_eligible, tail_probe_reasons = _species_result_eligibility(
+                dict(tail_retry_probe)
+            )
+            tail_probe_meta, tail_probe_meta_source = _b3_tail_meta_for_target(
+                dict(tail_retry_probe),
+                b3_tail_target=str(cfg_species.b3_tail_target),
+            )
+            requested_tail_model = str(cfg_species.b3_tail_model).strip().lower()
+            root_surrogate_policy = str(
+                self.cfg.root_threshold_b3_surrogate_mode
+            ).strip().lower()
+            tail_retry_is_root_surrogate = bool(
+                requested_tail_model == "full"
+                and root_surrogate_policy == "a_only_when_full_unresolved"
+            )
+            tail_retry_attempted = bool(
+                not tail_probe_eligible
+                and "threshold_state_unresolved" in tail_probe_reasons
+                and (
+                    requested_tail_model == "auto"
+                    or tail_retry_is_root_surrogate
+                )
+                and str(tail_probe_meta.get("model_selected", "")).strip().lower()
+                == "full"
+            )
+            tail_retry_selected = False
+            tail_retry_reasons: tuple[str, ...] = ()
+            if tail_retry_attempted:
+                cfg_tail_retry = replace(
+                    cfg_species,
+                    v_full_init=None,
+                    b3_tail_model="a_only",
+                )
+                tail_retry_result = _solve_species_from_config(cfg_tail_retry)
+                self._species_result_cache_misses += 1
+                self._species_threshold_b3_a_only_retries += 1
+                tail_retry_eligible, tail_retry_reasons = _species_result_eligibility(
+                    dict(tail_retry_result)
+                )
+                if tail_retry_eligible:
+                    result_species = tail_retry_result
+                    tail_retry_selected = True
+                    if tail_retry_is_root_surrogate:
+                        self._species_threshold_b3_root_surrogates += 1
+
+            result_species = dict(result_species)
+            result_species["mixture_threshold_cold_retry_attempted"] = bool(
+                cold_retry_attempted
+            )
+            result_species["mixture_threshold_cold_retry_selected"] = bool(
+                cold_retry_selected
+            )
+            result_species["mixture_threshold_cold_retry_initial_reasons"] = tuple(
+                initial_reasons
+            )
+            result_species["mixture_threshold_cold_retry_reasons"] = tuple(
+                cold_reasons
+            )
+            result_species["mixture_threshold_b3_a_only_retry_attempted"] = bool(
+                tail_retry_attempted
+            )
+            result_species["mixture_threshold_b3_a_only_retry_selected"] = bool(
+                tail_retry_selected
+            )
+            result_species["mixture_threshold_b3_a_only_retry_initial_reasons"] = tuple(
+                tail_probe_reasons
+            )
+            result_species["mixture_threshold_b3_a_only_retry_reasons"] = tuple(
+                tail_retry_reasons
+            )
+            result_species["mixture_threshold_b3_a_only_retry_role"] = (
+                "root_surrogate"
+                if tail_retry_selected and tail_retry_is_root_surrogate
+                else ("model_recovery" if tail_retry_selected else "none")
+            )
+            result_species["mixture_requested_b3_tail_model"] = str(
+                requested_tail_model
+            )
+            result_species["mixture_threshold_b3_tail_meta_source"] = str(
+                tail_probe_meta_source
+            )
             full_results[idx] = result_species
-            self._store_species_result(
-                symbol=self.symbols[idx],
-                r_ws_bohr=float(r_ws_species[idx]),
-                result=dict(result_species),
-            )
-            self._update_species_init_cache(
-                symbol=self.symbols[idx],
-                r_ws_bohr=float(r_ws_species[idx]),
-                result=dict(result_species),
-            )
+            # A root surrogate is deliberately kept out of both requested-model
+            # caches.  Reusing its A-only density or potential as if it were a
+            # converged full-B3 state would silently change the physical model
+            # at later theta values and during the final production rerun.
+            if not (
+                tail_retry_selected
+                and tail_retry_is_root_surrogate
+            ):
+                self._store_species_result(
+                    symbol=self.symbols[idx],
+                    r_ws_bohr=float(r_ws_species[idx]),
+                    result=dict(result_species),
+                )
+                self._update_species_init_cache(
+                    symbol=self.symbols[idx],
+                    r_ws_bohr=float(r_ws_species[idx]),
+                    result=dict(result_species),
+                )
 
         full_results = [dict(result_species) for result_species in full_results if result_species is not None]
 
@@ -1166,14 +1527,35 @@ class _MixtureEvaluator:
             "mu_ha": mu_values.copy(),
             "mu_residual_ha": residual.copy(),
             "results": full_results,
+            "root_uses_b3_surrogate": bool(
+                any(
+                    str(result_species.get(
+                        "mixture_threshold_b3_a_only_retry_role", ""
+                    )).strip().lower() == "root_surrogate"
+                    for result_species in full_results
+                )
+            ),
         }
-        self.cache[cache_key] = record
+        point_converged = _record_species_results_are_converged(record)
+        species_eligibility = [
+            _species_result_eligibility(dict(result_species))
+            for result_species in full_results
+        ]
+        # A failed inner AA solve must be observable to the root controller,
+        # but must not become a permanent exact-theta cache hit.  A later
+        # revisit can then retry it from a different converged warm start.
+        if point_converged:
+            self.cache[cache_key] = record
 
         self._eval_counter += 1
         hist_row: dict[str, Any] = {
             "iter": int(self._eval_counter),
             "theta_norm": float(np.linalg.norm(theta_arr)),
             "mu_span_ha": float(np.max(mu_values) - np.min(mu_values)),
+            "root_eligible": bool(point_converged),
+            "root_uses_b3_surrogate": bool(
+                record.get("root_uses_b3_surrogate", False)
+            ),
         }
         for idx, symbol in enumerate(self.symbols):
             result_species = full_results[idx]
@@ -1186,6 +1568,24 @@ class _MixtureEvaluator:
             hist_row[f"zbar_{symbol}"] = float(result_species.get("zbar", np.nan))
             hist_row[f"stage1_converged_{symbol}"] = bool(result_species.get("stage1_converged", False))
             hist_row[f"stage2_converged_{symbol}"] = bool(result_species.get("stage2_converged", False))
+            hist_row[f"root_eligible_{symbol}"] = bool(species_eligibility[idx][0])
+            hist_row[f"root_ineligible_reasons_{symbol}"] = ",".join(species_eligibility[idx][1])
+            hist_row[f"threshold_cold_retry_attempted_{symbol}"] = bool(
+                result_species.get("mixture_threshold_cold_retry_attempted", False)
+            )
+            hist_row[f"threshold_cold_retry_selected_{symbol}"] = bool(
+                result_species.get("mixture_threshold_cold_retry_selected", False)
+            )
+            hist_row[f"threshold_b3_a_only_retry_attempted_{symbol}"] = bool(
+                result_species.get(
+                    "mixture_threshold_b3_a_only_retry_attempted", False
+                )
+            )
+            hist_row[f"threshold_b3_a_only_retry_selected_{symbol}"] = bool(
+                result_species.get(
+                    "mixture_threshold_b3_a_only_retry_selected", False
+                )
+            )
             hist_row[f"stage1_iters_{symbol}"] = int(result_species.get("stage1_iters", 0))
             hist_row[f"stage2_iters_{symbol}"] = int(result_species.get("stage2_iters", 0))
             hist_row[f"stage1_err_{symbol}"] = float(stage1_hist[-1].get("err", np.nan)) if stage1_hist else np.nan
@@ -1222,6 +1622,46 @@ class _MixtureEvaluator:
                 stage2_hist = list(result_species.get("history", []))
                 stage1_err = float(stage1_hist[-1].get("err", np.nan)) if stage1_hist else np.nan
                 stage2_err = float(stage2_hist[-1].get("err", np.nan)) if stage2_hist else np.nan
+                cold_retry_txt = ""
+                if bool(
+                    result_species.get("mixture_threshold_cold_retry_attempted", False)
+                ):
+                    retry_state = (
+                        "selected"
+                        if bool(
+                            result_species.get(
+                                "mixture_threshold_cold_retry_selected", False
+                            )
+                        )
+                        else "failed"
+                    )
+                    cold_retry_txt = f"  threshold_cold_retry={retry_state}"
+                tail_retry_txt = ""
+                if bool(
+                    result_species.get(
+                        "mixture_threshold_b3_a_only_retry_attempted", False
+                    )
+                ):
+                    retry_state = (
+                        "selected"
+                        if bool(
+                            result_species.get(
+                                "mixture_threshold_b3_a_only_retry_selected", False
+                            )
+                        )
+                        else "failed"
+                    )
+                    retry_role = str(
+                        result_species.get(
+                            "mixture_threshold_b3_a_only_retry_role", ""
+                        )
+                    ).strip().lower()
+                    retry_label = (
+                        "threshold_b3_root_surrogate"
+                        if retry_role == "root_surrogate"
+                        else "threshold_b3_a_only_retry"
+                    )
+                    tail_retry_txt = f"  {retry_label}={retry_state}"
                 print(
                     "[mixture] "
                     f"  {symbol}: "
@@ -1230,12 +1670,30 @@ class _MixtureEvaluator:
                     f"stage2={bool(result_species.get('stage2_converged', False))} "
                     f"(iters={int(result_species.get('stage2_iters', 0))}, err={stage2_err:.3e})  "
                     f"Zbar={float(result_species.get('zbar', np.nan)):.6f}"
+                    f"{cold_retry_txt}"
+                    f"{tail_retry_txt}"
+                )
+            if not point_converged:
+                failed_symbols = [
+                    f"{self.symbols[idx]}({','.join(reasons)})"
+                    for idx, (eligible, reasons) in enumerate(species_eligibility)
+                    if not eligible
+                ]
+                print(
+                    "[mixture]   point rejected from common-mu root/surrogate: "
+                    "ineligible species=" + ",".join(failed_symbols)
                 )
         return record
 
     def residual(self, theta: np.ndarray) -> np.ndarray:
         """Return the common-chemical-potential mismatch vector."""
-        return np.asarray(self.evaluate(theta)["mu_residual_ha"], dtype=float)
+        record = self.evaluate(theta)
+        residual = np.asarray(record["mu_residual_ha"], dtype=float)
+        if not _record_species_results_are_converged(record):
+            # scipy root/least-squares helpers must not see a branch value from
+            # an unresolved threshold state as a valid residual sample.
+            return np.full_like(residual, np.nan, dtype=float)
+        return residual
 
 
 def _mixture_label_from_counts(symbols: list[str], counts: np.ndarray) -> str:
@@ -1342,13 +1800,13 @@ def solve_mixture_full_only(
         bracket_interval: tuple[float, float] | None = None
         reported_bracket_interval: tuple[float, float] | None = None
         is_binary = len(evaluator.elements) == 2
-        primary_root_maxfev = min(int(cfg.root_maxfev), 10) if is_binary else int(cfg.root_maxfev)
-        binary_brent_maxiter = 10
+        primary_root_maxfev = int(cfg.root_maxfev)
         observed_binary_points: list[tuple[float, float]] = []
+        invalid_binary_points: list[tuple[float, float]] = []
 
         def _primary_method_budget_exhausted() -> bool:
             if is_binary:
-                return int(len(evaluator.history)) >= 10
+                return int(len(evaluator.history)) >= int(primary_root_maxfev)
             return int(surrogate_iters) >= int(primary_root_maxfev)
 
         def _update_observed_binary_bracket() -> None:
@@ -1390,22 +1848,137 @@ def solve_mixture_full_only(
 
             theta_l = float(bracket_interval[0])
             theta_r = float(bracket_interval[1])
-            remaining_budget = max(int(cfg.root_maxfev) - int(len(evaluator.history)), 0)
-            if remaining_budget <= 0:
-                root_method = "binary_observed_bracket_brentq_budget_exhausted"
-                root_message = (
-                    "The binary common-mu solve reached the configured total iteration budget before "
-                    "the bracketed brent fallback could be completed."
-                )
-                return False
+            bracket_budget = int(cfg.root_brent_maxiter)
+
+            class _ResidualToleranceReached(Exception):
+                """Stop scipy's theta-root refinement once the physical dmu target is met."""
+
+            class _InvalidInnerAASolve(Exception):
+                """Mark a theta point whose inner AA state is not root-eligible."""
+
+                def __init__(self, theta: float, residual: float) -> None:
+                    super().__init__(float(theta), float(residual))
+                    self.theta = float(theta)
+                    self.residual = float(residual)
 
             def _f(theta_val: float) -> float:
-                return float(
-                    np.asarray(
-                        evaluator.residual(np.asarray([float(theta_val)], dtype=float)),
-                        dtype=float,
-                    ).reshape(-1)[0]
+                record = evaluator.evaluate(np.asarray([float(theta_val)], dtype=float))
+                residual_val = float(
+                    np.asarray(record["mu_residual_ha"], dtype=float).reshape(-1)[0]
                 )
+                # Brent's xtol controls the abstract theta coordinate, while
+                # production success is defined by mu_e_tol.  Register every
+                # expensive AA point immediately; otherwise a budget-limited
+                # brentq can pass through an excellent common-mu state and then
+                # discard it when scipy raises on theta maxiter.
+                residual_max_here = _consider(record)
+                if not np.isfinite(residual_max_here):
+                    # Returning the raw dmu here would allow brentq to treat an
+                    # unconverged/discontinuous inner-AA branch as a physical
+                    # function value.  In particular, a pressure-ionization
+                    # state flip can then masquerade as a common-mu root.
+                    raise _InvalidInnerAASolve(float(theta_val), residual_val)
+                if residual_max_here <= tol:
+                    raise _ResidualToleranceReached
+                return residual_val
+
+            def _recover_valid_subbracket(
+                invalid_point: _InvalidInnerAASolve,
+            ) -> tuple[float, float] | None:
+                """Find a same-valid-component sign bracket beside one AA gap.
+
+                A pressure-ionization interval can contain a narrow set of
+                theta values for which the orbital AA representation is not
+                numerically trustworthy.  Such values must never be returned
+                to Brent as function samples, but the common-mu root can still
+                lie on a valid component immediately beside that interval.
+
+                Starting very close to the failed point avoids spending a
+                sequence of expensive midpoint solves across the full bracket.
+                Once a valid point is found, bisection toward the invalid edge
+                either produces a sign change entirely between valid samples
+                or proves no such local subbracket within the bounded budget.
+                The invalid raw residual is used only to choose which side to
+                inspect first; it is never registered as physical data.
+                """
+                endpoint_values: list[tuple[float, float]] = []
+                for endpoint in (theta_l, theta_r):
+                    try:
+                        endpoint_values.append((float(endpoint), float(_f(endpoint))))
+                    except _InvalidInnerAASolve:
+                        continue
+
+                raw_bad = float(invalid_point.residual)
+                if np.isfinite(raw_bad) and raw_bad != 0.0:
+                    endpoint_values.sort(
+                        key=lambda item: (
+                            np.signbit(float(item[1])) == np.signbit(raw_bad),
+                            abs(float(item[0]) - float(invalid_point.theta)),
+                        )
+                    )
+                else:
+                    endpoint_values.sort(
+                        key=lambda item: abs(
+                            float(item[0]) - float(invalid_point.theta)
+                        )
+                    )
+
+                attempts_left = max(4, min(int(bracket_budget), 12))
+                for endpoint, endpoint_value in endpoint_values:
+                    if attempts_left <= 0:
+                        break
+                    invalid_edge = float(invalid_point.theta)
+                    valid_edge = float(endpoint)
+                    valid_value = float(endpoint_value)
+                    first_valid_found = False
+                    for fraction in (
+                        1.0 / 64.0,
+                        1.0 / 32.0,
+                        1.0 / 16.0,
+                        1.0 / 8.0,
+                        1.0 / 4.0,
+                        1.0 / 2.0,
+                    ):
+                        if attempts_left <= 0:
+                            break
+                        trial = float(
+                            invalid_point.theta
+                            + fraction * (float(endpoint) - invalid_point.theta)
+                        )
+                        attempts_left -= 1
+                        try:
+                            trial_value = float(_f(trial))
+                        except _InvalidInnerAASolve:
+                            invalid_edge = float(trial)
+                            continue
+                        if np.signbit(trial_value) != np.signbit(valid_value):
+                            return tuple(sorted((float(trial), float(valid_edge))))
+                        valid_edge = float(trial)
+                        valid_value = float(trial_value)
+                        first_valid_found = True
+                        break
+
+                    if not first_valid_found:
+                        continue
+
+                    # Approach the last invalid point from the valid side.
+                    # Consecutive valid samples with opposite signs define a
+                    # Brent bracket without ever using the invalid residual.
+                    for _ in range(4):
+                        if attempts_left <= 0:
+                            break
+                        trial = 0.5 * (float(invalid_edge) + float(valid_edge))
+                        attempts_left -= 1
+                        try:
+                            trial_value = float(_f(trial))
+                        except _InvalidInnerAASolve:
+                            invalid_edge = float(trial)
+                            continue
+                        if np.signbit(trial_value) != np.signbit(valid_value):
+                            return tuple(sorted((float(trial), float(valid_edge))))
+                        valid_edge = float(trial)
+                        valid_value = float(trial_value)
+                return None
 
             try:
                 theta_star = float(
@@ -1415,10 +1988,75 @@ def solve_mixture_full_only(
                         theta_r,
                         xtol=min(float(cfg.root_tol), 1.0e-6),
                         rtol=min(float(cfg.root_tol), 1.0e-6),
-                        maxiter=min(int(binary_brent_maxiter), int(remaining_budget)),
+                        maxiter=int(bracket_budget),
                     )
                 )
+            except _ResidualToleranceReached:
+                root_method = "binary_observed_bracket_mu_tolerance"
+                root_message = (
+                    "Converged inside the observed binary bracket after the true common-mu "
+                    "residual reached mu_e_tol."
+                )
+                return True
+            except _InvalidInnerAASolve as invalid_point:
+                try:
+                    recovered_interval = _recover_valid_subbracket(invalid_point)
+                except _ResidualToleranceReached:
+                    root_method = "binary_invalid_gap_mu_tolerance"
+                    root_message = (
+                        "Converged on a valid AA component beside a pressure-ionization "
+                        "gap after the true common-mu residual reached mu_e_tol."
+                    )
+                    return True
+                if recovered_interval is None:
+                    root_method = "binary_observed_bracket_inner_aa_failed"
+                    root_message = (
+                        "The observed sign-change bracket crosses a point where at least "
+                        "one species AA solve is not root-eligible. The invalid dmu was "
+                        "excluded, and the bounded adjacent-component search found no "
+                        "all-valid sign subbracket."
+                    )
+                    return False
+                try:
+                    theta_star = float(
+                        brentq(
+                            _f,
+                            float(recovered_interval[0]),
+                            float(recovered_interval[1]),
+                            xtol=min(float(cfg.root_tol), 1.0e-6),
+                            rtol=min(float(cfg.root_tol), 1.0e-6),
+                            maxiter=int(bracket_budget),
+                        )
+                    )
+                except _ResidualToleranceReached:
+                    root_method = "binary_invalid_gap_mu_tolerance"
+                    root_message = (
+                        "Converged in an all-valid subbracket beside a pressure-ionization "
+                        "gap after the true common-mu residual reached mu_e_tol."
+                    )
+                    return True
+                except _InvalidInnerAASolve:
+                    root_method = "binary_observed_bracket_inner_aa_failed"
+                    root_message = (
+                        "A second non-root-eligible AA point occurred inside the recovered "
+                        "subbracket; no invalid residual was passed to Brent."
+                    )
+                    return False
+                root_method = "binary_invalid_gap_brentq"
+                root_message = (
+                    "Converged via Brent on an all-valid sign subbracket adjacent to an "
+                    "excluded pressure-ionization interval."
+                )
+                _consider(evaluator.evaluate(np.asarray([theta_star], dtype=float)))
+                return True
             except Exception:
+                if best_residual_max <= tol:
+                    root_method = "binary_observed_bracket_mu_tolerance"
+                    root_message = (
+                        "Converged inside the observed binary bracket after the true common-mu "
+                        "residual reached mu_e_tol."
+                    )
+                    return True
                 root_method = "binary_observed_bracket_brentq_failed"
                 root_message = (
                     "The binary common-mu solve found one observed sign-change bracket, but brentq did not "
@@ -1434,9 +2072,27 @@ def solve_mixture_full_only(
 
         def _consider(record: dict[str, Any]) -> float:
             nonlocal best_final, best_residual_max
-            _record_species_samples(species_samples, record)
             residual_try = np.asarray(record["mu_residual_ha"], dtype=float)
             residual_max = float(np.max(np.abs(residual_try)))
+            if not _record_species_results_are_converged(record):
+                # Failed inner-AA states are neither root candidates nor valid
+                # samples of mu_i(V_i).  Feeding one into the surrogate can
+                # steer later evaluations toward a numerical branch jump.
+                #
+                # For a binary mixture retain the coordinate and raw residual
+                # in a separate search-direction-only list.  The raw value is
+                # never admitted to the bracket, surrogate, or best state.  It
+                # merely identifies which edge of an unresolved interval
+                # deserves additional converged probes.
+                if is_binary and residual_try.size == 1:
+                    theta_scalar = float(
+                        np.asarray(record["theta"], dtype=float).reshape(-1)[0]
+                    )
+                    dmu_scalar = float(residual_try[0])
+                    if np.isfinite(theta_scalar) and np.isfinite(dmu_scalar):
+                        invalid_binary_points.append((theta_scalar, dmu_scalar))
+                return np.inf
+            _record_species_samples(species_samples, record)
             if is_binary and residual_try.size == 1:
                 theta_scalar = float(np.asarray(record["theta"], dtype=float).reshape(-1)[0])
                 dmu_scalar = float(residual_try[0])
@@ -1448,9 +2104,113 @@ def solve_mixture_full_only(
                 best_final = record
             return residual_max
 
+        def _probe_binary_invalid_edges() -> bool:
+            """Probe toward rejected binary AA points using only valid values.
+
+            A common-mu root can lie between the nearest valid seed and a seed
+            whose inner AA calculation failed.  The rejected residual must
+            not be passed to Brent, but abandoning the whole interval can miss
+            a regular root on its valid side.  Coordinate bisection supplies
+            progressively warmer starts and either finds an all-valid sign
+            bracket/root or resolves the edge without treating a failed AA
+            value as physical.
+            """
+            nonlocal root_method, root_message
+            if (
+                not is_binary
+                or bracket_found
+                or not observed_binary_points
+                or not invalid_binary_points
+            ):
+                return False
+
+            # Prefer the nearest valid/invalid pair whose residual signs
+            # differ.  The invalid sign selects a direction only; convergence
+            # and bracketing below are decided exclusively by eligible points.
+            candidates: list[
+                tuple[float, float, float, float, float]
+            ] = []
+            for theta_valid, dmu_valid in observed_binary_points:
+                for theta_invalid, dmu_invalid in invalid_binary_points:
+                    if (
+                        not np.isfinite(dmu_valid)
+                        or not np.isfinite(dmu_invalid)
+                        or dmu_valid == 0.0
+                        or dmu_invalid == 0.0
+                        or np.signbit(dmu_valid) == np.signbit(dmu_invalid)
+                    ):
+                        continue
+                    distance = abs(float(theta_invalid) - float(theta_valid))
+                    if distance <= 1.0e-12:
+                        continue
+                    candidates.append(
+                        (
+                            float(distance),
+                            float(theta_valid),
+                            float(dmu_valid),
+                            float(theta_invalid),
+                            float(dmu_invalid),
+                        )
+                    )
+            candidates.sort(key=lambda item: item[0])
+            if not candidates:
+                return False
+
+            attempted = False
+            probed_theta: set[float] = set()
+            for _, theta_valid, dmu_valid, theta_invalid, _ in candidates:
+                while (
+                    best_residual_max > tol
+                    and not bracket_found
+                    and not _primary_method_budget_exhausted()
+                ):
+                    theta_trial = 0.5 * (
+                        float(theta_valid) + float(theta_invalid)
+                    )
+                    key = round(float(theta_trial), 12)
+                    if (
+                        key in probed_theta
+                        or abs(float(theta_invalid) - float(theta_valid))
+                        <= max(float(cfg.root_tol), 1.0e-8)
+                    ):
+                        break
+                    probed_theta.add(key)
+                    attempted = True
+                    record = evaluator.evaluate(
+                        np.asarray([float(theta_trial)], dtype=float)
+                    )
+                    residual_here = _consider(record)
+                    if not np.isfinite(residual_here):
+                        theta_invalid = float(theta_trial)
+                        continue
+                    if residual_here <= tol:
+                        root_method = "binary_invalid_edge_mu_tolerance"
+                        root_message = (
+                            "Converged while probing the valid side of an "
+                            "excluded inner-AA interval; no rejected residual "
+                            "was used as a physical root value."
+                        )
+                        return True
+
+                    dmu_here = float(
+                        np.asarray(
+                            record["mu_residual_ha"], dtype=float
+                        ).reshape(-1)[0]
+                    )
+                    if np.signbit(dmu_here) != np.signbit(dmu_valid):
+                        # _consider has already registered both eligible
+                        # endpoints and updated the observed bracket.
+                        return True
+                    theta_valid = float(theta_trial)
+                    dmu_valid = float(dmu_here)
+
+                if best_residual_max <= tol or bracket_found:
+                    return True
+            return attempted
+
         # For N>2 we keep the broader legacy surrogate/local-refine strategy.
         # For binary mixtures we deliberately switch to one bracketed scalar
-        # fallback after at most 10 conventional iterations instead of relying
+        # fallback within the configured total evaluation budget instead of relying
         # on repeated local surrogate reseeds.
         if explicit_init is not None and not is_binary:
             explicit_theta = _weights_to_theta(explicit_init)
@@ -1544,11 +2304,15 @@ def solve_mixture_full_only(
                 break
             seed_eval_count += 1
             residual_max = _consider(evaluator.evaluate(_weights_to_theta(seed)))
-            if residual_max <= tol:
+            if residual_max <= tol or (is_binary and bracket_found):
                 break
 
         seed_cursor = n_seed_target
-        while best_residual_max > tol and not _primary_method_budget_exhausted():
+        while (
+            best_residual_max > tol
+            and not _primary_method_budget_exhausted()
+            and not (is_binary and bracket_found)
+        ):
             ran_refine = _run_surrogate_refine(int(primary_root_maxfev) - surrogate_iters)
             if best_residual_max <= tol or ran_refine:
                 break
@@ -1557,6 +2321,47 @@ def solve_mixture_full_only(
             seed_eval_count += 1
             _consider(evaluator.evaluate(_weights_to_theta(seed_weights[seed_cursor])))
             seed_cursor += 1
+
+        # An explicit binary warm start deliberately begins with a narrow
+        # theta neighborhood.  That neighborhood is an accelerator, not a
+        # promise that the common-mu root lies inside it.  If all local points
+        # have the same residual sign, spend the remaining *existing* budget
+        # on the broader physical seeds before declaring failure.  Previously
+        # this fallback was available only for N>2 mixtures, so a binary solve
+        # could stop after five local evaluations even when root_maxfev was
+        # larger and a sign change existed at one of the global seeds.
+        if (
+            best_residual_max > tol
+            and is_binary
+            and prefer_local_seeds
+            and not bracket_found
+            and not _primary_method_budget_exhausted()
+        ):
+            global_seed_weights = _initial_weight_guesses(
+                fractions=evaluator.x,
+                elements=evaluator.elements,
+                explicit=explicit_init,
+                local_only=False,
+            )
+            for seed in global_seed_weights:
+                if _primary_method_budget_exhausted():
+                    break
+                seed_key = tuple(np.round(np.asarray(seed, dtype=float), 10))
+                if seed_key in seed_keys_seen:
+                    continue
+                seed_keys_seen.add(seed_key)
+                seed_eval_count += 1
+                residual_max = _consider(evaluator.evaluate(_weights_to_theta(seed)))
+                if residual_max <= tol or bracket_found:
+                    break
+
+        if (
+            best_residual_max > tol
+            and is_binary
+            and not bracket_found
+            and not _primary_method_budget_exhausted()
+        ):
+            _probe_binary_invalid_edges()
 
         if best_residual_max > tol and is_binary and bracket_found and bracket_interval is not None:
             _refine_observed_binary_bracket()
@@ -1600,7 +2405,11 @@ def solve_mixture_full_only(
             if theta_bracketed is not None:
                 _consider(evaluator.evaluate(theta_bracketed))
         if best_final is None:
-            raise RuntimeError("Multicomponent common-mu solve did not produce any candidate.")
+            raise RuntimeError(
+                "Multicomponent common-mu solve did not produce any candidate for which "
+                "every species AA stage-2 solve converged. Unconverged species results "
+                "were excluded from root interpolation and warm-start caches."
+            )
 
         final = best_final
         theta_star = np.asarray(final["theta"], dtype=float)
@@ -1612,23 +2421,27 @@ def solve_mixture_full_only(
                 if root_method not in (
                     "binary_observed_bracket_brentq_budget_exhausted",
                     "binary_observed_bracket_brentq_failed",
+                    "binary_observed_bracket_inner_aa_failed",
                 ):
                     root_method = "binary_observed_bracket_brentq_unconverged"
                     root_message = (
                         "The binary observed-bracket brentq fallback located a sign-change interval in the "
                         "true residual, but did not reach the requested tolerance within the configured "
-                        "10-step brent phase. Returning the best available AA state for this temperature."
+                        "brent phase. The best available AA state is retained only for an explicitly "
+                        "requested diagnostic continuation."
                     )
             elif bracket_found and bracket_interval is not None:
                 root_method = "binary_direct_scan_brentq_bracket_only"
                 root_message = (
                     "The binary common-mu scan located a sign-change bracket in the true residual, "
-                    "but the requested tolerance was not reached. Returning the best available AA state."
+                    "but the requested tolerance was not reached. The best available AA state is "
+                    "retained only for an explicitly requested diagnostic continuation."
                 )
             else:
                 root_message = (
                     "The common-mu solve did not reach the requested tolerance. "
-                    "Returning the best available AA state instead of aborting."
+                    "The best available AA state is retained only for an explicitly "
+                    "requested diagnostic continuation."
                 )
             if cfg.show_mu_progress or cfg.verbose:
                 msg = (
@@ -1642,6 +2455,109 @@ def solve_mixture_full_only(
                         f"{float(bracket_interval[1]):.6f}]."
                     )
                 print(msg)
+            if not bool(cfg.allow_unconverged_root):
+                raise RuntimeError(
+                    "Multicomponent common-mu solve did not converge: "
+                    f"best max|dmu|={residual_max:.6e} Ha exceeds "
+                    f"mu_e_tol={tol:.6e} Ha after {len(evaluator.history)} evaluations; "
+                    f"method={root_method}; detail={root_message} "
+                    "Set allow_unconverged_root=True only for "
+                    "diagnostic best-effort output."
+                )
+
+        root_uses_b3_surrogate = bool(
+            final.get("root_uses_b3_surrogate", False)
+        )
+        if root_uses_b3_surrogate:
+            # The A-only state above is a coordinate surrogate, not a physical
+            # solution of the requested full-B3 mixture.  Start a bounded,
+            # requested-model solve at that candidate and accept only the
+            # independently converged full-B3 residual.  The verifier has the
+            # surrogate policy disabled, so recursion terminates here and no
+            # A-only payload can cross the AA -> QOZ/HNC boundary.
+            verify_cfg = replace(
+                cfg,
+                root_threshold_b3_surrogate_mode="off",
+                volume_weights_init=tuple(
+                    float(value)
+                    for value in np.asarray(final["weights"], dtype=float)
+                ),
+                allow_unconverged_root=False,
+            )
+            proxy_residual_max = float(residual_max)
+            proxy_theta = [
+                float(value)
+                for value in np.asarray(final["theta"], dtype=float)
+            ]
+            proxy_method = str(root_method)
+            try:
+                verified = solve_mixture_full_only(
+                    verify_cfg,
+                    species_init_cache=evaluator._species_init_cache,
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "The common-mu root search reached an A-only B3 surrogate "
+                    f"candidate at theta={proxy_theta} with "
+                    f"max|dmu|={proxy_residual_max:.6e} Ha, but the requested "
+                    "full-B3 verification did not converge. The surrogate was "
+                    "not returned and QOZ/HNC must not be run from it. "
+                    f"Full-B3 verifier detail: {exc}"
+                ) from exc
+
+            verified_meta = dict(verified.get("meta", {}))
+            verified_meta.update(
+                {
+                    "root_threshold_b3_surrogate_mode": str(
+                        cfg.root_threshold_b3_surrogate_mode
+                    ),
+                    "root_threshold_b3_surrogate_used": True,
+                    "root_threshold_b3_surrogate_candidate_theta": proxy_theta,
+                    "root_threshold_b3_surrogate_candidate_mu_residual_max_ha": float(
+                        proxy_residual_max
+                    ),
+                    "root_threshold_b3_surrogate_method": str(proxy_method),
+                    "root_threshold_b3_surrogate_nfev": int(
+                        len(evaluator.history)
+                    ),
+                    "root_threshold_b3_surrogate_species_solves": int(
+                        evaluator._species_result_cache_misses
+                    ),
+                    "root_threshold_b3_surrogate_retries": int(
+                        evaluator._species_threshold_b3_root_surrogates
+                    ),
+                    "root_threshold_b3_a_only_retries": int(
+                        evaluator._species_threshold_b3_a_only_retries
+                        + int(
+                            verified_meta.get(
+                                "root_threshold_b3_a_only_retries", 0
+                            )
+                        )
+                    ),
+                    "root_threshold_b3_root_surrogates": int(
+                        evaluator._species_threshold_b3_root_surrogates
+                    ),
+                    "root_threshold_b3_full_verification_attempted": True,
+                    "root_threshold_b3_full_verification_success": True,
+                    "root_threshold_b3_full_verification_mu_residual_max_ha": float(
+                        verified_meta.get("mu_residual_max_ha", np.nan)
+                    ),
+                    "root_method": (
+                        f"{str(verified_meta.get('root_method', 'unknown'))}"
+                        "_after_b3_a_only_surrogate"
+                    ),
+                    "root_total_nfev_including_b3_surrogate": int(
+                        len(evaluator.history)
+                        + int(verified_meta.get("root_nfev", 0))
+                    ),
+                    "root_total_species_solves_including_b3_surrogate": int(
+                        evaluator._species_result_cache_misses
+                        + int(verified_meta.get("root_species_solves", 0))
+                    ),
+                }
+            )
+            verified["meta"] = verified_meta
+            return verified
 
         mu_values = np.asarray(final["mu_ha"], dtype=float)
         mu_common = float(np.mean(mu_values))
@@ -1671,11 +2587,17 @@ def solve_mixture_full_only(
                 "rho_g_cc": float(cfg.rho_g_cc),
                 "mu_common_ha": float(mu_common),
                 "mu_residual_max_ha": float(residual_max),
+                "mu_e_tol_ha": float(tol),
                 "volume_weights": [float(v) for v in final["weights"]],
                 "vbar_bohr3": float(evaluator.vbar_bohr3),
                 "root_success": bool(root_success),
                 "root_message": str(root_message),
                 "root_nfev": int(len(evaluator.history)),
+                "root_primary_maxfev": int(cfg.root_maxfev),
+                "root_brent_maxiter": int(cfg.root_brent_maxiter),
+                "root_n_invalid_inner": int(
+                    sum(not bool(row.get("root_eligible", True)) for row in evaluator.history)
+                ),
                 "root_method": str(root_method),
                 "root_n_seed_evals": int(seed_eval_count),
                 "root_n_refine": int(surrogate_iters),
@@ -1687,6 +2609,21 @@ def solve_mixture_full_only(
                 ),
                 "root_species_cache_hits": int(evaluator._species_result_cache_hits),
                 "root_species_solves": int(evaluator._species_result_cache_misses),
+                "root_threshold_cold_retries": int(
+                    evaluator._species_threshold_cold_retries
+                ),
+                "root_threshold_b3_a_only_retries": int(
+                    evaluator._species_threshold_b3_a_only_retries
+                ),
+                "root_threshold_b3_root_surrogates": int(
+                    evaluator._species_threshold_b3_root_surrogates
+                ),
+                "root_threshold_b3_surrogate_mode": str(
+                    cfg.root_threshold_b3_surrogate_mode
+                ),
+                "root_threshold_b3_surrogate_used": False,
+                "root_threshold_b3_full_verification_attempted": False,
+                "root_threshold_b3_full_verification_success": False,
                 "species_parallel_jobs": int(cfg.species_parallel_jobs),
                 "species_parallel_backend": str(cfg.species_parallel_backend),
             },
@@ -1790,10 +2727,21 @@ def _final_species_config(
         **cfg.aa_overrides,
         **extra_overrides,
     }
-    if run_mode != "full":
-        species_kwargs.setdefault("screening_tail_repair_mode", "constrained_b3")
-        species_kwargs.setdefault("screening_tail_repair_rel_tol", 5.0e-2)
-        species_kwargs.setdefault("screening_tail_charge_weight", 1.0e3)
+    # Preserve a root-stage threshold recovery in the final full+external
+    # rerun.  Returning to ``auto`` here would simply recreate the oscillatory
+    # B3 tail that the audited full-only solve rejected.  Explicit user choices
+    # (notably ``full``) remain untouched.
+    if (
+        isinstance(full_result_init, dict)
+        and bool(
+            full_result_init.get(
+                "mixture_threshold_b3_a_only_retry_selected", False
+            )
+        )
+        and str(species_kwargs.get("b3_tail_model", "full")).strip().lower()
+        == "auto"
+    ):
+        species_kwargs["b3_tail_model"] = "a_only"
     cfg_species = FullExternalConfig(
         **species_kwargs
     )
@@ -1852,10 +2800,48 @@ def solve_mixture_full_then_ext(cfg: MixtureConfig) -> dict[str, Any]:
         else:
             with ProcessPoolExecutor(max_workers=jobs) as executor:
                 final_results = list(executor.map(_solve_species_from_config, species_cfgs))
-    final_mu_values = np.asarray([float(result_species["mu"]) for result_species in final_results], dtype=float)
-    final_mu_common = float(np.mean(final_mu_values))
+    require_external = run_mode != "full"
+    final_eligibility = [
+        _species_result_eligibility(
+            dict(result_species),
+            require_external=bool(require_external),
+        )
+        for result_species in final_results
+    ]
+    final_issues: list[str] = []
+    for sp, (eligible, reasons) in zip(
+        mixture_full["species"], final_eligibility, strict=True
+    ):
+        if not eligible:
+            final_issues.extend(
+                f"{str(sp['element'])}:{str(reason)}" for reason in reasons
+            )
+
+    final_mu_values = np.asarray(
+        [float(result_species.get("mu", np.nan)) for result_species in final_results],
+        dtype=float,
+    )
+    final_mu_common = (
+        float(np.mean(final_mu_values))
+        if final_mu_values.size > 0 and np.all(np.isfinite(final_mu_values))
+        else np.nan
+    )
     final_mu_residual = final_mu_values[:-1] - final_mu_values[-1]
-    final_mu_residual_max = float(np.max(np.abs(final_mu_residual))) if final_mu_residual.size > 0 else 0.0
+    final_mu_residual_max = (
+        float(np.max(np.abs(final_mu_residual)))
+        if final_mu_residual.size > 0 and np.all(np.isfinite(final_mu_residual))
+        else (0.0 if final_mu_residual.size == 0 and np.all(np.isfinite(final_mu_values)) else np.inf)
+    )
+    final_mu_root_success = bool(
+        np.isfinite(final_mu_residual_max)
+        and final_mu_residual_max <= float(cfg.mu_e_tol)
+    )
+    if not final_mu_root_success:
+        final_issues.append("mixture:final_mu_residual_above_tolerance")
+    final_electronic_eligible = bool(
+        all(eligible for eligible, _ in final_eligibility)
+        and final_mu_root_success
+    )
 
     final_species: list[dict[str, Any]] = []
     for sp, final_result in zip(mixture_full["species"], final_results, strict=True):
@@ -1880,6 +2866,9 @@ def solve_mixture_full_then_ext(cfg: MixtureConfig) -> dict[str, Any]:
             "save_linear_n_points": int(cfg.save_linear_n_points),
             "final_mu_common_ha": float(final_mu_common),
             "final_mu_residual_max_ha": float(final_mu_residual_max),
+            "final_mu_root_success": bool(final_mu_root_success),
+            "final_electronic_eligible": bool(final_electronic_eligible),
+            "final_electronic_issues": list(final_issues),
         },
     }
     if cfg.save_data:

@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: >-
+  If you use Otter in published work, please cite the software and the
+  model papers identified by the documentation for the features you use.
+  The repository-wide key registry and contributor policy are in
+  CITATIONS.md; generated workflows expose the same keys through
+  config.citation(style="plain"|"bibtex"|"cite").
+title: Otter
+type: software
+version: 0.2.0
+authors:
+  - family-names: Qu
+    given-names: Chongbing
+repository-code: https://github.com/quchongbing/otter
+license: BSD-3-Clause
+keywords:
+  - average atom
+  - dense plasma
+  - ionic structure
+  - pseudoatom
+  - QOZ
+  - HNC
+  - warm dense matter
+preferred-citation:
+  type: software
+  title: Otter
+  version: 0.2.0
+  authors:
+    - family-names: Qu
+      given-names: Chongbing
+  repository-code: https://github.com/quchongbing/otter

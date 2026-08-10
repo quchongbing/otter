@@ -3,54 +3,104 @@ otter/ionic/qoz.py
 
 Purpose
 -------
-Reusable one-component QOZ building blocks.
+Reusable one- and multicomponent QOZ building blocks.
 
 Scope
 -----
-This module now owns the core QOZ pieces:
+This module owns the core QOZ pieces:
   - jellium response ingredients (`chi0`, `G_ee`, `chi_ee`)
-  - Starrett-style effective ion-ion potential construction from `n_scr`
-  - one-component OZ + HNC solver
+  - effective ion-ion potentials constructed from `n_scr`
+  - one- and multicomponent OZ + HNC solvers
+
+Physical references
+-------------------
+The one-component reduction follows C. E. Starrett and D. Saumon,
+High Energy Density Physics 10, 35--42 (2014), Eqs. (14)--(18),
+DOI 10.1016/j.hedp.2013.12.001.  The common-response mixture extension
+follows C. E. Starrett et al., Physical Review E 90, 033110 (2014),
+especially Eq. (20), DOI 10.1103/PhysRevE.90.033110.  Chabrier's
+finite-temperature jellium LFC is the production default; model-specific
+references and implementation provenance are recorded in
+``otter.ionic.lfc``.  The canonical keys are
+:cite:`StarrettSaumon2014,StarrettEtAl2014,Mermin1970,Chabrier1990`.
+
+The ``lindhard_fd`` path evaluates the collisionless static
+finite-temperature Lindhard response.  Mermin's relaxation-time construction
+:cite:`Mermin1970` is cited for the dielectric-response context; this path
+does not introduce Mermin's finite collision frequency.
+
+Anderson mixing, matrix-free Newton iterations, adaptive potential
+continuation, high-k tapering, and strict DST charge closure are Otter
+numerical methods.  They are not algorithms claimed by those papers.
 """
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
-from numba import njit
+try:
+    from numba import njit
+except Exception:  # pragma: no cover - numba is optional at import time
+    def njit(*args, **kwargs):  # type: ignore[misc]
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]
+
+        def _decorator(func):
+            return func
+
+        return _decorator
 
 from otter.electronic.continuum.ideal import ideal_unbound_density
 from otter.electronic.continuum.tail import tail_parameters
 from otter.numerics.transforms import (
     RadialTransform,
+    dst_lattice_zero_moment,
     radial_forward,
     radial_inverse,
 )
-from otter.ionic.response import cee_from_gee, gee_jellium
+from otter.ionic.lfc import cee_from_gee, gee_jellium
+from otter.literature import (
+    CitationMixin,
+    citation_keys_for_chi0_model,
+    citation_keys_for_lfc_model,
+)
 
 
 @dataclass(frozen=True)
-class QOZResponseOptions:
+class QOZResponseOptions(CitationMixin):
     """
     Controls for the electron-response part of the QOZ chain.
 
     These parameters enter Eq.(17)/(18)-style constructions through:
       - the non-interacting response `chi0`
       - the electron-electron local field correction `G_ee`
+
+    ``lfc_model="chabrier1990"`` selects Chabrier's finite-temperature
+    extension of the full Utsumi--Ichimaru form.  It is distinct from the
+    simpler ``"chabrier_hubbard"`` comparison form retained for diagnostics.
     """
 
     chi0_model: str = "lindhard_fd"
-    lfc_model: str = "hubbard"
+    lfc_model: str = "chabrier1990"
     electron_temperature_ha: float | None = None
     mu_jellium_override_ha: float | None = None
     lindhard_p_points: int = 4096
     lindhard_p_max_mult: float = 8.0
     lindhard_p_max_extra: float = 20.0
 
+    @property
+    def citation_keys(self) -> tuple[str, ...]:
+        return (
+            "StarrettSaumon2014",
+            "StarrettEtAl2014",
+            *citation_keys_for_chi0_model(self.chi0_model),
+            *citation_keys_for_lfc_model(self.lfc_model),
+        )
+
 
 @dataclass(frozen=True)
-class QOZPotentialOptions:
+class QOZPotentialOptions(CitationMixin):
     """
     Controls for building the effective ion-ion potential from `n_scr`.
 
@@ -59,6 +109,10 @@ class QOZPotentialOptions:
 
     response: QOZResponseOptions = QOZResponseOptions()
     high_k_taper_start_frac: float | None = 0.9
+
+    @property
+    def citation_keys(self) -> tuple[str, ...]:
+        return tuple(self.response.citation_keys)
 
 
 @dataclass(frozen=True)
@@ -87,15 +141,20 @@ class ScreeningChargeConsistencyResult:
     Screening-density profile after optional `Q_scr -> Zbar` enforcement.
 
     The reduced QOZ mapping is especially sensitive to the low-k content of
-    `n_scr(k)`. When the AA/QOZ box leaves a small residual screening-charge
-    mismatch, this helper keeps the correction explicit and records the before /
-    after integral diagnostics needed by examples and tests.
+    `n_scr(k)`.  This helper keeps native-grid interpolation and discrete-grid
+    closure explicit and records both trapezoidal and DST diagnostics.
     """
 
     n_scr_r: np.ndarray
     q_scr_raw: float
     q_scr_used: float
     q_scr_rel: float
+    normalization_measure: str = "trapezoid"
+    scale_factor: float = 1.0
+    q_scr_trapz_raw: float = np.nan
+    q_scr_trapz_used: float = np.nan
+    q_scr_dst_raw: float = np.nan
+    q_scr_dst_used: float = np.nan
 
 
 @dataclass(frozen=True)
@@ -112,6 +171,12 @@ class MultiComponentScreeningChargeConsistencyResult:
     q_scr_raw: np.ndarray
     q_scr_used: np.ndarray
     q_scr_rel: np.ndarray
+    normalization_measure: str = "trapezoid"
+    scale_factor: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
+    q_scr_trapz_raw: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
+    q_scr_trapz_used: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
+    q_scr_dst_raw: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
+    q_scr_dst_used: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
 
 
 @dataclass(frozen=True)
@@ -173,12 +238,90 @@ def _high_k_cosine_taper_numba(k_arr: np.ndarray, start_frac: float) -> np.ndarr
     return out
 
 
+def radial_charge_trapezoid(r: np.ndarray, density_r: np.ndarray) -> float | np.ndarray:
+    """Integrate one or more spherical number densities on their native grid."""
+    r_arr = np.asarray(r, dtype=float)
+    density_arr = np.asarray(density_r, dtype=float)
+    if r_arr.ndim != 1 or density_arr.ndim == 0 or density_arr.shape[-1] != r_arr.size:
+        raise ValueError("density_r must end in the one-dimensional r grid.")
+    return 4.0 * np.pi * np.trapezoid((r_arr**2) * density_arr, r_arr, axis=-1)
+
+
+def qoz_zbar_from_nscr(
+    r: np.ndarray,
+    n_scr: np.ndarray,
+    *,
+    partition_zbar: float | np.ndarray | None = None,
+    electronic_zbar: float | np.ndarray | None = None,
+    mode: str = "pseudoatom_partition",
+) -> float | np.ndarray:
+    r"""Select the ionic charge used by the reduced QOZ mapping.
+
+    ``pseudoatom_partition`` is the production choice.  It enforces the joint
+    Starrett--Saumon identities (2013, Eqs. 73--76; 2014, Eqs. 9, 10, 15)
+
+    .. math::
+
+       \int n_e^{\rm PA}\,d^3r=Z,\qquad
+       n_e^{\rm scr}=n_e^{\rm PA}-n_e^{\rm ion},
+
+    and therefore uses
+
+    .. math:: \bar Z = Z-\int n_e^{\rm ion}(r)\,d^3r.
+
+    The downstream charge-closure step then normalizes the screening cloud on
+    the *actual DST lattice* so that Eq. (15),
+
+    .. math:: \bar Z = \int n_e^{\rm scr}(r)\,d^3r.
+
+    is also satisfied numerically.  This distinction matters when a finite
+    full/external box leaves a small pseudoatom-neutrality residual.
+
+    ``screening_integral`` returns the uncorrected native-grid integral.  It
+    remains useful for auditing that residual, but treating it as the physical
+    charge would silently accept a non-neutral numerical pseudoatom.
+
+    ``electronic`` retains the former behavior and is provided only for
+    controlled comparisons with existing results.  The electronic value is
+    commonly the AA diagnostic ``Z - Q_ion(R_WS)`` and must not be silently
+    conflated with the QOZ/TCP definition above.
+    """
+    mode_key = str(mode).strip().lower().replace("-", "_")
+    if mode_key in {
+        "pseudoatom_partition",
+        "partition",
+        "pa_partition",
+        "z_minus_qion_all",
+    }:
+        if partition_zbar is None:
+            raise ValueError(
+                "partition_zbar is required when qoz zbar mode is "
+                "'pseudoatom_partition'."
+            )
+        value = np.asarray(partition_zbar, dtype=float)
+    elif mode_key in {"screening_integral", "nscr_integral", "eq15_raw"}:
+        value = np.asarray(radial_charge_trapezoid(r, n_scr), dtype=float)
+    elif mode_key in {"electronic", "aa", "legacy"}:
+        if electronic_zbar is None:
+            raise ValueError("electronic_zbar is required when qoz zbar mode is 'electronic'.")
+        value = np.asarray(electronic_zbar, dtype=float)
+    else:
+        raise ValueError(
+            "qoz zbar mode must be 'pseudoatom_partition', "
+            "'screening_integral', or 'electronic'."
+        )
+    if np.any(~np.isfinite(value)) or np.any(value <= 0.0):
+        raise ValueError("The selected QOZ screening charge must be finite and positive.")
+    return float(value) if value.ndim == 0 else value
+
+
 def enforce_screening_charge_consistency(
     r: np.ndarray,
     n_scr: np.ndarray,
     *,
     zbar: float,
     renormalize: bool = True,
+    transform: RadialTransform | None = None,
 ) -> ScreeningChargeConsistencyResult:
     """
     Optionally rescale `n_scr(r)` so its integrated screening charge matches `Zbar`.
@@ -192,8 +335,11 @@ def enforce_screening_charge_consistency(
     zbar
         Net ionic charge used by the reduced QOZ mapping.
     renormalize
-        If True, scale `n_scr` so that
-        `4*pi*int r^2 n_scr(r) dr = Zbar`.
+        If True, scale `n_scr` so its selected discrete charge is `Zbar`.
+    transform
+        Optional strict DST lattice.  When supplied, the normalization uses
+        the DST's own discrete zero moment.  When omitted, the legacy/native
+        trapezoidal integral is retained for backward-compatible utilities.
 
     Returns
     -------
@@ -203,29 +349,68 @@ def enforce_screening_charge_consistency(
 
     Notes
     -----
-    This helper does not invent new tail structure. It only applies one global
-    amplitude rescaling, which is the smallest correction consistent with the
-    intended reduced-QOZ charge normalization.
+    This helper does not invent new tail structure.  In production the target
+    is the all-space pseudoatom partition ``Z-Q_ion(all)``; this final scalar
+    factor repairs any pseudoatom-neutrality residual together with
+    interpolation and strict-DST quadrature differences.  The raw trap and DST
+    charges and the applied scale remain explicit diagnostics.
     """
     r = np.asarray(r, dtype=float)
     n_scr_arr = np.asarray(n_scr, dtype=float)
     if r.shape != n_scr_arr.shape:
         raise ValueError("r and n_scr must have the same shape.")
 
-    zbar_val = max(float(zbar), 1.0e-12)
-    q_scr_raw = 4.0 * np.pi * float(np.trapezoid((r**2) * n_scr_arr, r))
+    if transform is not None:
+        if transform.r.shape != r.shape or not np.allclose(
+            transform.r,
+            r,
+            rtol=1.0e-12,
+            atol=max(1.0e-14, abs(float(transform.dr)) * 1.0e-12),
+        ):
+            raise ValueError("r must match transform.r when a DST transform is supplied.")
+
+    if not np.isfinite(float(zbar)) or float(zbar) <= 0.0:
+        raise ValueError("zbar must be finite and positive for screening-charge closure.")
+    zbar_val = max(abs(float(zbar)), 1.0e-12)
+    q_trap_raw = float(radial_charge_trapezoid(r, n_scr_arr))
+    q_dst_raw = (
+        float(dst_lattice_zero_moment(n_scr_arr, transform))
+        if transform is not None
+        else np.nan
+    )
+    normalization_measure = "dst_zero_moment" if transform is not None else "trapezoid"
+    q_scr_raw = q_dst_raw if transform is not None else q_trap_raw
     q_scr_rel = abs(float(q_scr_raw) - float(zbar)) / zbar_val
 
     n_scr_use = np.asarray(n_scr_arr, dtype=float).copy()
-    if renormalize and np.isfinite(q_scr_raw) and abs(q_scr_raw) > 1.0e-12:
-        n_scr_use *= float(zbar) / float(q_scr_raw)
+    scale_factor = 1.0
+    if renormalize:
+        if not np.isfinite(q_scr_raw) or abs(q_scr_raw) <= 1.0e-12:
+            raise ValueError(
+                "Cannot normalize n_scr to zbar: its selected discrete charge "
+                f"is {q_scr_raw!r}."
+            )
+        scale_factor = float(zbar) / float(q_scr_raw)
+        n_scr_use *= scale_factor
 
-    q_scr_used = 4.0 * np.pi * float(np.trapezoid((r**2) * n_scr_use, r))
+    q_trap_used = float(radial_charge_trapezoid(r, n_scr_use))
+    q_dst_used = (
+        float(dst_lattice_zero_moment(n_scr_use, transform))
+        if transform is not None
+        else np.nan
+    )
+    q_scr_used = q_dst_used if transform is not None else q_trap_used
     return ScreeningChargeConsistencyResult(
         n_scr_r=np.asarray(n_scr_use, dtype=float),
         q_scr_raw=float(q_scr_raw),
         q_scr_used=float(q_scr_used),
         q_scr_rel=float(q_scr_rel),
+        normalization_measure=str(normalization_measure),
+        scale_factor=float(scale_factor),
+        q_scr_trapz_raw=float(q_trap_raw),
+        q_scr_trapz_used=float(q_trap_used),
+        q_scr_dst_raw=float(q_dst_raw),
+        q_scr_dst_used=float(q_dst_used),
     )
 
 
@@ -235,6 +420,7 @@ def enforce_screening_charge_consistency_many(
     *,
     zbar: np.ndarray,
     renormalize: bool = True,
+    transform: RadialTransform | None = None,
 ) -> MultiComponentScreeningChargeConsistencyResult:
     """
     Apply per-species `Q_scr -> Zbar` enforcement for a mixture.
@@ -268,22 +454,39 @@ def enforce_screening_charge_consistency_many(
     q_raw = np.zeros(n_scr_arr.shape[0], dtype=float)
     q_use = np.zeros(n_scr_arr.shape[0], dtype=float)
     q_rel = np.zeros(n_scr_arr.shape[0], dtype=float)
+    scale = np.ones(n_scr_arr.shape[0], dtype=float)
+    q_trap_raw = np.zeros(n_scr_arr.shape[0], dtype=float)
+    q_trap_use = np.zeros(n_scr_arr.shape[0], dtype=float)
+    q_dst_raw = np.full(n_scr_arr.shape[0], np.nan, dtype=float)
+    q_dst_use = np.full(n_scr_arr.shape[0], np.nan, dtype=float)
     for idx in range(n_scr_arr.shape[0]):
         one = enforce_screening_charge_consistency(
             r_arr,
             n_scr_arr[idx],
             zbar=float(zbar_arr[idx]),
             renormalize=bool(renormalize),
+            transform=transform,
         )
         n_fix[idx] = one.n_scr_r
         q_raw[idx] = float(one.q_scr_raw)
         q_use[idx] = float(one.q_scr_used)
         q_rel[idx] = float(one.q_scr_rel)
+        scale[idx] = float(one.scale_factor)
+        q_trap_raw[idx] = float(one.q_scr_trapz_raw)
+        q_trap_use[idx] = float(one.q_scr_trapz_used)
+        q_dst_raw[idx] = float(one.q_scr_dst_raw)
+        q_dst_use[idx] = float(one.q_scr_dst_used)
     return MultiComponentScreeningChargeConsistencyResult(
         n_scr_r=n_fix,
         q_scr_raw=q_raw,
         q_scr_used=q_use,
         q_scr_rel=q_rel,
+        normalization_measure=("dst_zero_moment" if transform is not None else "trapezoid"),
+        scale_factor=scale,
+        q_scr_trapz_raw=q_trap_raw,
+        q_scr_trapz_used=q_trap_use,
+        q_scr_dst_raw=q_dst_raw,
+        q_scr_dst_used=q_dst_use,
     )
 
 
@@ -354,6 +557,14 @@ def chi0_lindhard_finite_t(
     change of variables on both sides of the logarithmic kernel. The k -> 0
     limit is replaced by -dn/dmu from a finite-difference derivative of the
     ideal-gas density.
+
+    References
+    ----------
+    N. D. Mermin, Phys. Rev. B 1, 2362 (1970),
+    DOI 10.1103/PhysRevB.1.2362.  That paper gives the conserving
+    relaxation-time construction based on the Lindhard dielectric function.
+    This routine evaluates only its collisionless, static non-interacting
+    input and does not implement a finite relaxation rate.
     """
     k_arr = np.ascontiguousarray(np.asarray(k, dtype=np.float64))
     if np.any(k_arr < 0.0):
@@ -479,7 +690,7 @@ def chi_ee_from_eq17(
     response_options: QOZResponseOptions | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Build `chi_ee(k)` from the Starrett Eq.(17)/(18) chain.
+    Build `chi_ee(k)` from Starrett--Saumon (2014), Eqs. (17)--(18).
 
     The implementation is intentionally split into the same three logical
     stages used in the paper:
@@ -536,6 +747,86 @@ def chi_ee_from_eq17(
     return chi_ee, chi0, gee
 
 
+def _stable_effective_pair_potential_k(
+    *,
+    n_scr_k: np.ndarray,
+    zbar: np.ndarray,
+    k: np.ndarray,
+    chi0_k: np.ndarray,
+    gee_k: np.ndarray,
+) -> np.ndarray:
+    r"""Assemble Eq. (14) without subtracting two divergent Coulomb terms.
+
+    With ``q_i(k) = n_scr_i(k)`` and ``d_i = q_i - Z_i``, the usual reduced
+    QOZ expression can be rearranged exactly as
+
+    .. math::
+
+       V_{ij} = v_c[-Z_i d_j-Z_j d_i-d_i d_j+G q_iq_j]
+                + q_iq_j/\chi_0.
+
+    Charge closure makes ``d_i = O(k**2)``.  This form therefore avoids the
+    former direct subtraction of two separately ``O(1/k**2)`` quantities,
+    which magnified roundoff in the first reciprocal-space modes.
+    """
+    charge_remainder, lfc_term, chi0_term = decompose_effective_pair_potential_k(
+        n_scr_k=n_scr_k,
+        zbar=zbar,
+        k=k,
+        chi0_k=chi0_k,
+        gee_k=gee_k,
+    )
+    return charge_remainder + lfc_term + chi0_term
+
+
+def decompose_effective_pair_potential_k(
+    *,
+    n_scr_k: np.ndarray,
+    zbar: np.ndarray,
+    k: np.ndarray,
+    chi0_k: np.ndarray,
+    gee_k: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    r"""Return the three finite pieces of the stable Starrett potential.
+
+    With ``q_i=n_scr_i`` and ``d_i=q_i-Z_i``, this returns
+
+    .. math::
+
+       V_{\rm charge} &= v_c[-Z_i d_j-Z_j d_i-d_i d_j],\\
+       V_{\rm LFC}    &= v_c G q_iq_j,\\
+       V_{\chi_0}    &= q_iq_j/\chi_0.
+
+    Their sum is exactly :func:`_stable_effective_pair_potential_k`. Keeping
+    the pieces finite permits low-``k`` attribution for both one- and
+    multicomponent calculations without reintroducing the subtraction of two
+    separately divergent Coulomb terms.
+    """
+    q = np.asarray(n_scr_k, dtype=float)
+    z = np.asarray(zbar, dtype=float)
+    k_arr = np.asarray(k, dtype=float)
+    chi0 = np.asarray(chi0_k, dtype=float)
+    gee = np.asarray(gee_k, dtype=float)
+    if q.ndim != 2 or z.shape != (q.shape[0],):
+        raise ValueError("n_scr_k must have shape (n_species, n_k) with matching zbar.")
+    if q.shape[1] != k_arr.size or chi0.shape != k_arr.shape or gee.shape != k_arr.shape:
+        raise ValueError("k, chi0_k, gee_k, and n_scr_k must share the reciprocal grid.")
+
+    k2 = np.maximum(k_arr**2, 1.0e-24)
+    v_c = 4.0 * np.pi / k2
+    delta = q - z[:, np.newaxis]
+    q_i = q[:, np.newaxis, :]
+    q_j = q[np.newaxis, :, :]
+    d_i = delta[:, np.newaxis, :]
+    d_j = delta[np.newaxis, :, :]
+    z_i = z[:, np.newaxis, np.newaxis]
+    z_j = z[np.newaxis, :, np.newaxis]
+    charge_remainder = v_c * (-z_i * d_j - z_j * d_i - d_i * d_j)
+    lfc_term = v_c * gee * q_i * q_j
+    chi0_term = (q_i * q_j) / chi0
+    return charge_remainder, lfc_term, chi0_term
+
+
 def build_effective_vii_from_nscr(
     r: np.ndarray,
     n_scr: np.ndarray,
@@ -547,8 +838,10 @@ def build_effective_vii_from_nscr(
     options: QOZPotentialOptions | None = None,
 ) -> EffectivePotentialResult:
     """
-    Build the effective ion-ion potential from `n_scr` using the current
-    Starrett-style one-component QOZ mapping.
+    Build the effective ion-ion potential from `n_scr`.
+
+    The physical reduction is Starrett--Saumon (2014), Eqs. (14)--(18),
+    DOI 10.1016/j.hedp.2013.12.001.
 
     Key quantities
     --------------
@@ -562,11 +855,11 @@ def build_effective_vii_from_nscr(
     `options.response.electron_temperature_ha` when provided; otherwise it
     falls back to the same value as `ion_temperature_ha`.
 
-    The current production path keeps this construction deliberately simple:
+    The Otter production path evaluates this construction as follows:
       1) transform n_scr(r) -> n_scr(k)
       2) build chi_ee(k)
       3) assemble C_Ie(k)
-      4) assemble raw Eq.(14) V_ii(k)
+      4) assemble Eq.(14) in its charge-separated stable form
       5) inverse transform back to V_ii(r)
 
     The only k-space post-processing retained in the production path is one
@@ -599,9 +892,13 @@ def build_effective_vii_from_nscr(
     )
     beta = 1.0 / max(float(ion_temperature_ha), 1e-12)
     c_ie_k = -beta * n_scr_k / chi_ee
-    k2 = np.maximum(np.asarray(k, dtype=float) ** 2, 1e-24)
-    v_c_k = 4.0 * np.pi / k2
-    vii_k = (beta * (zbar ** 2) * v_c_k - n_scr_k * c_ie_k) / beta
+    vii_k = _stable_effective_pair_potential_k(
+        n_scr_k=n_scr_k[np.newaxis, :],
+        zbar=np.asarray([zbar], dtype=float),
+        k=np.asarray(k, dtype=float),
+        chi0_k=chi0_k,
+        gee_k=gee_k,
+    )[0, 0]
     if opts.high_k_taper_start_frac is not None:
         taper_start = float(opts.high_k_taper_start_frac)
         if not (0.0 < taper_start < 1.0):
@@ -662,7 +959,8 @@ def build_effective_vij_from_nscr(
     Notes
     -----
     For a common electron response `chi_ee(k)` and one screening cloud per
-    species, Starrett's mixture reduction gives
+    species, Starrett et al. (2014), Eq. (20),
+    DOI 10.1103/PhysRevE.90.033110, gives
 
       C_ie^i(k) = -beta * n_scr^i(k) / chi_ee(k)
       V_ij(k)   = 4*pi*Z_i*Z_j/k^2 - [C_ie^i(k)/beta] * n_scr^j(k)
@@ -717,15 +1015,15 @@ def build_effective_vij_from_nscr(
 
     beta = 1.0 / max(float(ion_temperature_ha), 1e-12)
     c_ie_k = -beta * n_scr_k / chi_ee[np.newaxis, :]
-    k2 = np.maximum(k_arr**2, 1e-24)
-    v_c_k = 4.0 * np.pi / k2
 
-    vij_k = np.zeros((n_species, n_species, k_arr.size), dtype=float)
+    vij_k = _stable_effective_pair_potential_k(
+        n_scr_k=n_scr_k,
+        zbar=zbar_arr,
+        k=k_arr,
+        chi0_k=chi0_k,
+        gee_k=gee_k,
+    )
     vij_r = np.zeros((n_species, n_species, r_arr.size), dtype=float)
-    for i in range(n_species):
-        for j in range(n_species):
-            vij_k[i, j] = zbar_arr[i] * zbar_arr[j] * v_c_k - (c_ie_k[i] / beta) * n_scr_k[j]
-
     vij_k = 0.5 * (vij_k + np.swapaxes(vij_k, 0, 1))
     if opts.high_k_taper_start_frac is not None:
         taper_start = float(opts.high_k_taper_start_frac)
@@ -778,7 +1076,7 @@ def hnc_solver(
     tail_points: int = 64,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[float]]:
     """
-    Solve the one-component OZ + HNC problem with Anderson/Picard mixing.
+    Solve the one-component OZ equation with the HNC closure.
 
     Parameters
     ----------
@@ -812,8 +1110,9 @@ def hnc_solver(
       h(k) = c(k) / (1 - n_i c(k))
       N_new(k) = h(k) - c(k)
 
-    The physical guards are kept inside the solver so callers get one stable
-    entry point instead of re-implementing line search and sanity checks.
+    The OZ/HNC closure is the one used in Starrett--Saumon (2014),
+    Eqs. (14)--(18).  Anderson/Picard mixing and the physical iterate guards
+    are Otter numerical choices, not prescriptions from that reference.
     """
     r = np.asarray(r, dtype=float)
     k = np.asarray(k, dtype=float)
@@ -882,9 +1181,9 @@ def hnc_solver(
         n_k = h_k - c_k
         n_new = radial_inverse(n_k, transform)
         if enforce_h_tail_zero and n_new.size >= n_tail:
-            # Finite boxes leave a small arbitrary offset in the tail of N(r).
-            # Removing its mean over the last few points enforces the expected
-            # h(r)->0 behaviour at the boundary and reduces ringing.
+            # Legacy option: finite boxes can leave a small offset in N=h-c.
+            # Subtracting it can reduce ringing, but it also perturbs the exact
+            # OZ/closure identity; production therefore leaves this disabled.
             n_new = n_new - float(np.mean(n_new[-n_tail:]))
         if c_cap > 0.0:
             # The cap is purely numerical: it prevents a single bad trial step
@@ -892,7 +1191,12 @@ def hnc_solver(
             n_new = np.clip(n_new, -c_cap, c_cap)
         return n_new, h_k, h, g, c_k
 
-    def _candidate_physical(cand_n: np.ndarray) -> bool:
+    def _candidate_physical(
+        cand_n: np.ndarray,
+    ) -> tuple[
+        bool,
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None,
+    ]:
         """
         Reject obviously non-physical HNC iterates before accepting them.
 
@@ -910,19 +1214,20 @@ def hnc_solver(
         of accepting it.
         """
         if not np.all(np.isfinite(cand_n)):
-            return False
-        _, h_k_loc, _, g_loc, _ = _map_n(cand_n)
+            return False, None
+        mapped = _map_n(cand_n)
+        _, h_k_loc, _, g_loc, _ = mapped
         s_loc = 1.0 + n_i * h_k_loc
         if not np.all(np.isfinite(s_loc)):
-            return False
+            return False, None
         if float(np.min(s_loc)) < float(s_min_floor):
-            return False
+            return False, None
         if float(np.max(s_loc)) > float(s_max_ceil):
-            return False
+            return False, None
         g_tail = float(np.mean(g_loc[-n_tail:]))
         if g_tail < float(g_tail_min) or g_tail > float(g_tail_max):
-            return False
-        return True
+            return False, None
+        return True, mapped
 
     best_res = np.inf
     n_cur = np.zeros_like(beta_v_r)
@@ -933,6 +1238,11 @@ def hnc_solver(
         n_map, _, _, _, _ = _map_n(n_cur)
         n_picard = (1.0 - alpha) * n_cur + alpha * n_map
         n_next = n_picard
+        n_next_ok = False
+        mapped_next: (
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+            | None
+        ) = None
 
         if scheme == "anderson":
             # Anderson mixing builds an extrapolated candidate from a short
@@ -957,12 +1267,17 @@ def hnc_solver(
                     coeff = np.linalg.lstsq(a_aug, b_aug, rcond=None)[0][:p]
                     y_stack = np.vstack([y.reshape(-1) for y in y_hist]).T
                     n_and = (y_stack @ coeff).reshape(n_cur.shape)
-                    if _candidate_physical(n_and):
+                    n_and_ok, mapped_and = _candidate_physical(n_and)
+                    if n_and_ok:
                         n_next = n_and
+                        n_next_ok = True
+                        mapped_next = mapped_and
                 except np.linalg.LinAlgError:
                     n_next = n_picard
 
-        if not _candidate_physical(n_next):
+        if not n_next_ok:
+            n_next_ok, mapped_next = _candidate_physical(n_next)
+        if not n_next_ok:
             # If the extrapolated point is unphysical, repeatedly average it
             # back toward the previous iterate until it becomes acceptable.
             # This is a simple line search in function space.
@@ -970,31 +1285,41 @@ def hnc_solver(
             accepted = False
             for _ls in range(12):
                 n_work = 0.5 * (n_work + n_cur)
-                if _candidate_physical(n_work):
+                n_work_ok, mapped_work = _candidate_physical(n_work)
+                if n_work_ok:
                     n_next = n_work
                     accepted = True
+                    n_next_ok = True
+                    mapped_next = mapped_work
                     break
             if not accepted:
                 # Final fallback: take only a tiny Picard step. If even that is
                 # unphysical, freeze the iterate and let the residual test
                 # decide whether more progress is possible.
                 n_try = (1.0 - 0.02) * n_cur + 0.02 * n_map
-                if _candidate_physical(n_try):
+                n_try_ok, mapped_try = _candidate_physical(n_try)
+                if n_try_ok:
                     n_next = n_try
+                    n_next_ok = True
+                    mapped_next = mapped_try
                 else:
                     n_next = n_cur.copy()
+                    n_next_ok, mapped_next = _candidate_physical(n_next)
 
-        # Convergence is measured by the fixed-point residual ||F(x)-x||, not
-        # by the accepted step size. This matters because the physical guards
-        # can freeze the accepted step while the map itself is still far from a
-        # fixed point.
-        num = np.linalg.norm(n_map - n_cur)
-        den = max(np.linalg.norm(n_cur), np.linalg.norm(n_map), 1e-14)
+        # Score the *accepted* candidate, rather than the previous iterate.
+        # This keeps the residual attached to the same N(r) from which the
+        # returned g/h/c/S arrays are built.  In particular, a rejected or
+        # frozen trial must not inherit an apparently good residual from a
+        # different point.
+        if mapped_next is None:
+            mapped_next = _map_n(n_next)
+        n_next_map = mapped_next[0]
+        num = np.linalg.norm(n_next_map - n_next)
+        den = max(np.linalg.norm(n_next), np.linalg.norm(n_next_map), 1e-14)
         res = float(num / den)
         res_hist.append(res)
 
-        n_ok = _candidate_physical(n_next)
-        if n_ok and np.isfinite(res) and res < best_res:
+        if n_next_ok and np.isfinite(res) and res < best_res:
             best_res = res
             best_n = n_next.copy()
             best_ok = True
@@ -1032,6 +1357,7 @@ def hnc_solver_multicomponent(
     c_map_clip: float = 200.0,
     s_min_floor: float = 1e-6,
     s_max_ceil: float = 1e3,
+    s_projection_mode: str = "clip",
     g_tail_min: float = 0.4,
     g_tail_max: float = 2.5,
     enforce_h_tail_zero: bool = True,
@@ -1055,6 +1381,11 @@ def hnc_solver_multicomponent(
     n_init_r
         Optional initial guess for the multicomponent nodal term
         `N_ij(r) = h_ij(r) - c_ij(r)` with shape `(n_species, n_species, n_r)`.
+    s_projection_mode
+        ``"none"`` solves the raw OZ matrix equation. ``"clip"`` retains the
+        historical PSD eigenvalue projection for diagnostics and backward
+        compatibility, but changes the fixed point and must not be used to
+        claim a physical root.
 
     Returns
     -------
@@ -1062,13 +1393,16 @@ def hnc_solver_multicomponent(
 
     Notes
     -----
-    This is the direct multicomponent extension of the one-component nodal-term
-    iteration. For each `k` mode it solves the matrix OZ relation
+    This implements the mixture OZ/HNC closure of Starrett et al. (2014),
+    DOI 10.1103/PhysRevE.90.033110.  For each `k` mode it solves the matrix
+    OZ relation
 
       H(k) = C(k) [I - D C(k)]^{-1}
 
     with `D = diag(n_i)`, and applies the HNC closure on every pair channel
-    simultaneously.
+    simultaneously.  The nodal-term iteration and optional PSD projection
+    are Otter numerical/diagnostic choices; production disables projection
+    because it changes the physical fixed point.
     """
     r_arr = np.asarray(r, dtype=float)
     k_arr = np.asarray(k, dtype=float)
@@ -1086,12 +1420,23 @@ def hnc_solver_multicomponent(
     res_hist: list[float] = []
     n_species = v_arr.shape[0]
     scheme = str(mixing_scheme).lower().strip()
-    if scheme not in ("picard", "anderson"):
-        raise ValueError("mixing_scheme must be 'picard' or 'anderson'.")
+    if scheme not in ("picard", "anderson", "newton_krylov"):
+        raise ValueError(
+            "mixing_scheme must be 'picard', 'anderson', or 'newton_krylov'."
+        )
+    projection_mode = str(s_projection_mode).lower().strip().replace("-", "_")
+    if projection_mode not in ("clip", "none", "raw"):
+        raise ValueError("s_projection_mode must be 'clip' or 'none'.")
+    use_s_projection = projection_mode == "clip"
 
     beta_v_r = beta * v_arr
     n_tail = min(max(int(tail_points), 8), int(r_arr.size))
     c_cap = float(c_map_clip)
+    if scheme == "newton_krylov" and (use_s_projection or c_cap > 0.0):
+        raise ValueError(
+            "newton_krylov requires s_projection_mode='none' and c_map_clip=0; "
+            "otherwise Newton would solve a clipped surrogate rather than OZ/HNC."
+        )
     sqrt_n_vec = np.sqrt(np.maximum(n_i_arr, 1.0e-300))
     sqrt_n = np.outer(sqrt_n_vec, sqrt_n_vec)
     inv_sqrt_n = 1.0 / np.maximum(sqrt_n, 1.0e-300)
@@ -1135,7 +1480,8 @@ def hnc_solver_multicomponent(
         except np.linalg.LinAlgError:
             s_batch = np.linalg.solve(a_batch + 1.0e-10 * eye_batch, eye_batch)
         s_batch = 0.5 * (s_batch + np.swapaxes(s_batch, -1, -2))
-        s_k = _project_s_matrix(np.moveaxis(s_batch, 0, -1))
+        s_k_raw = _symmetrize_pair(np.moveaxis(s_batch, 0, -1))
+        s_k = _project_s_matrix(s_k_raw) if use_s_projection else s_k_raw
         h_k = (s_k - eye[:, :, np.newaxis]) * inv_sqrt_n[:, :, np.newaxis]
         h_k = _symmetrize_pair(h_k)
         return h_k, s_k
@@ -1172,7 +1518,10 @@ def hnc_solver_multicomponent(
         h_k, s_k = _matrix_oz(c_k)
         n_k = _symmetrize_pair(h_k - c_k)
 
-        # (3) Transform the nodal term back to real space and remove tiny tail offsets.
+        # (3) Transform the nodal term back to real space.  The optional tail
+        # shift remains the direct-API legacy default, but the high-level
+        # production workflow disables it because it perturbs the exact
+        # OZ/closure identity.
         n_new = _pair_inverse(n_k)
         if enforce_h_tail_zero and n_new.shape[-1] >= n_tail:
             n_new = n_new - np.mean(n_new[..., -n_tail:], axis=-1, keepdims=True)
@@ -1190,6 +1539,20 @@ def hnc_solver_multicomponent(
         _, h_k_loc, _, g_loc, _ = mapped
         if not np.all(np.isfinite(h_k_loc)) or not np.all(np.isfinite(g_loc)):
             return False, None
+        if not use_s_projection:
+            s_loc = (
+                np.eye(n_species, dtype=float)[:, :, np.newaxis]
+                + sqrt_n[:, :, np.newaxis] * h_k_loc
+            )
+            eig_loc = np.linalg.eigvalsh(
+                np.moveaxis(_symmetrize_pair(s_loc), -1, 0)
+            )
+            if (
+                not np.all(np.isfinite(eig_loc))
+                or float(np.min(eig_loc)) < float(s_min_floor)
+                or float(np.max(eig_loc)) > float(s_max_ceil)
+            ):
+                return False, None
         g_tail = np.mean(g_loc[:, :, -n_tail:], axis=2)
         if float(np.min(g_tail)) < float(g_tail_min) or float(np.max(g_tail)) > float(g_tail_max):
             return False, None
@@ -1208,6 +1571,85 @@ def hnc_solver_multicomponent(
     best_n = n_cur.copy()
     best_ok = False
     mapped_cur: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None
+
+    if scheme == "newton_krylov":
+        # Starrett & Saumon (2014), Sec. III, note that their strongly coupled
+        # HNC cases require a Newton iteration.  Work only with the independent
+        # upper-triangular pair channels and use a matrix-free Krylov Jacobian;
+        # forming the dense Jacobian would scale as (N_r N_pair)^2.
+        from scipy.optimize import NoConvergence, newton_krylov
+
+        tri_i, tri_j = np.triu_indices(n_species)
+
+        def _pack_pair(arr: np.ndarray) -> np.ndarray:
+            return np.asarray(arr[tri_i, tri_j, :], dtype=float).reshape(-1)
+
+        def _unpack_pair(vec: np.ndarray) -> np.ndarray:
+            packed = np.asarray(vec, dtype=float).reshape(tri_i.size, r_arr.size)
+            arr = np.empty_like(beta_v_r)
+            arr[tri_i, tri_j, :] = packed
+            arr[tri_j, tri_i, :] = packed
+            return arr
+
+        best_vec = _pack_pair(n_cur)
+
+        def _raw_residual(vec: np.ndarray) -> np.ndarray:
+            n_trial = _unpack_pair(vec)
+            n_map_trial = _map_n(n_trial)[0]
+            return _pack_pair(n_trial - n_map_trial)
+
+        def _newton_callback(vec: np.ndarray, residual: np.ndarray) -> None:
+            nonlocal best_res, best_vec, best_ok
+            vec_norm = max(float(np.linalg.norm(vec)), 1.0e-14)
+            res_rel = float(np.linalg.norm(residual) / vec_norm)
+            res_hist.append(res_rel)
+            candidate = _unpack_pair(vec)
+            ok, _ = _candidate_physical(candidate)
+            if ok and np.isfinite(res_rel) and res_rel < best_res:
+                best_res = res_rel
+                best_vec = np.asarray(vec, dtype=float).copy()
+                best_ok = True
+
+        x0 = _pack_pair(n_cur)
+        try:
+            solved_vec = np.asarray(
+                newton_krylov(
+                    _raw_residual,
+                    x0,
+                    method="lgmres",
+                    inner_maxiter=40,
+                    outer_k=max(int(anderson_m), 3),
+                    maxiter=int(max_iter),
+                    f_tol=max(float(tol) * 1.0e-2, 1.0e-10),
+                    x_tol=np.inf,
+                    x_rtol=1.0e300,
+                    line_search="armijo",
+                    callback=_newton_callback,
+                    verbose=False,
+                ),
+                dtype=float,
+            )
+        except NoConvergence as exc:
+            solved_vec = np.asarray(exc.args[0], dtype=float)
+
+        solved_n = _unpack_pair(solved_vec)
+        solved_residual = _raw_residual(solved_vec)
+        solved_rel = float(
+            np.linalg.norm(solved_residual)
+            / max(float(np.linalg.norm(solved_vec)), 1.0e-14)
+        )
+        if not res_hist or solved_rel != res_hist[-1]:
+            res_hist.append(solved_rel)
+        solved_ok, _ = _candidate_physical(solved_n)
+        if solved_ok and solved_rel < best_res:
+            best_res = solved_rel
+            best_vec = solved_vec.copy()
+            best_ok = True
+        n_cur = _unpack_pair(best_vec if best_ok else solved_vec)
+        _, h_k, h_r, g_r, c_k = _map_n(n_cur)
+        c_r = _pair_inverse(c_k)
+        s_ij_k = np.eye(n_species)[:, :, np.newaxis] + sqrt_n[:, :, np.newaxis] * h_k
+        return g_r, s_ij_k, h_r, c_r, res_hist
 
     for _ in range(int(max_iter)):
         if mapped_cur is None:
@@ -1277,8 +1719,14 @@ def hnc_solver_multicomponent(
                     n_next_ok = True
                     mapped_next = mapped_cur
 
-        num = np.linalg.norm(n_map - n_cur)
-        den = max(np.linalg.norm(n_cur), np.linalg.norm(n_map), 1e-14)
+        # ``mapped_next`` belongs to the accepted candidate.  Use its own
+        # fixed-point defect so the stored best iterate and the reported
+        # residual always describe the same point.
+        if mapped_next is None:
+            mapped_next = _map_n(n_next)
+        n_next_map = mapped_next[0]
+        num = np.linalg.norm(n_next_map - n_next)
+        den = max(np.linalg.norm(n_next), np.linalg.norm(n_next_map), 1e-14)
         res = float(num / den)
         res_hist.append(res)
 
@@ -1311,8 +1759,21 @@ def hnc_solver_multicomponent_continuation(
     *,
     potential_scales: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0),
     stage_max_iter: int | None = None,
+    newton_max_iter: int | None = None,
+    adaptive: bool = False,
+    min_scale_step: float = 2.0e-3,
+    max_stage_attempts: int = 32,
+    require_converged: bool = False,
+    fallback_mixing_scheme: str | None = None,
     **kwargs,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[float], list[dict[str, float]]]:
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[float],
+    list[dict[str, float | bool | str]],
+]:
     """
     Solve multicomponent HNC by ramping the pair potential strength in stages.
 
@@ -1325,6 +1786,16 @@ def hnc_solver_multicomponent_continuation(
         Each stage warm-starts the next one with the previous nodal term.
     stage_max_iter
         Optional per-stage iteration cap. If omitted, reuse `max_iter`.
+    newton_max_iter
+        Optional, usually smaller cap for matrix-free Newton stages.
+    adaptive
+        Bisect a rejected potential-strength increment down to
+        `min_scale_step` instead of carrying a failed stage forward.
+    require_converged
+        Raise when no raw, positive, closure-consistent root can be continued
+        to the requested scale.
+    fallback_mixing_scheme
+        Optional solver used after the primary scheme rejects a stage.
     **kwargs
         Forwarded to `hnc_solver_multicomponent`.
 
@@ -1336,25 +1807,59 @@ def hnc_solver_multicomponent_continuation(
 
     Notes
     -----
-    Real mixture pair potentials can be much stiffer than the weak synthetic
+    This potential-strength continuation is an Otter numerical method, not a
+    procedure stated in Starrett et al. (2014).  Real mixture pair potentials
+    can be much stiffer than the weak synthetic
     smoke tests. A short potential-strength continuation frequently reaches a
-    physical branch that direct full-strength iteration misses.
+    physical branch that direct full-strength iteration misses.  A stage is
+    accepted only when the fixed-point residual, raw OZ positivity, and the
+    independent `S(k) <-> FT[g(r)-1]` identity all pass; projected or clipped
+    pseudo-roots are never warm-started into the next production stage.
     """
     scales = tuple(float(val) for val in potential_scales)
     if len(scales) == 0:
         raise ValueError("potential_scales must contain at least one stage.")
     if any(val <= 0.0 for val in scales):
         raise ValueError("potential_scales must be strictly positive.")
+    if any(right <= left for left, right in zip(scales[:-1], scales[1:])):
+        raise ValueError("potential_scales must be strictly increasing.")
+    if float(min_scale_step) <= 0.0:
+        raise ValueError("min_scale_step must be positive.")
+    if int(max_stage_attempts) < len(scales):
+        raise ValueError("max_stage_attempts must be at least len(potential_scales).")
 
     local_kwargs = dict(kwargs)
     max_iter_local = int(local_kwargs.pop("max_iter", 400))
+    tol_local = float(local_kwargs.get("tol", 1.0e-5))
     if stage_max_iter is not None:
         max_iter_local = int(stage_max_iter)
+    if newton_max_iter is not None and int(newton_max_iter) < 2:
+        raise ValueError("newton_max_iter must be at least 2 when provided.")
+
+    def _iteration_cap(scheme_name: str) -> int:
+        if str(scheme_name).strip().lower() == "newton_krylov" and newton_max_iter is not None:
+            return min(max_iter_local, int(newton_max_iter))
+        return max_iter_local
 
     n_init = local_kwargs.pop("n_init_r", None)
-    stage_meta: list[dict[str, float]] = []
+    stage_meta: list[dict[str, float | bool | str]] = []
     last_out: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[float]] | None = None
-    for idx, scale in enumerate(scales):
+    last_accepted_meta: dict[str, float | bool | str] | None = None
+    pending_scales = list(scales)
+    last_accepted_scale = 0.0
+    active_scheme = str(local_kwargs.get("mixing_scheme", "anderson"))
+    attempt = 0
+    while pending_scales:
+        if attempt >= int(max_stage_attempts):
+            raise RuntimeError(
+                "Multicomponent HNC continuation exhausted its adaptive stage budget "
+                f"after {attempt} attempts; largest accepted potential scale="
+                f"{last_accepted_scale:.6f}."
+            )
+        scale = float(pending_scales.pop(0))
+        attempt += 1
+        solve_kwargs = dict(local_kwargs)
+        solve_kwargs["mixing_scheme"] = active_scheme
         g_r, s_k, h_r, c_r, res_hist = hnc_solver_multicomponent(
             r,
             k,
@@ -1363,23 +1868,133 @@ def hnc_solver_multicomponent_continuation(
             n_i,
             temperature_ha,
             n_init_r=n_init,
-            max_iter=max_iter_local,
-            **local_kwargs,
+            max_iter=_iteration_cap(active_scheme),
+            **solve_kwargs,
         )
-        last_out = (g_r, s_k, h_r, c_r, res_hist)
-        n_init = np.asarray(h_r, dtype=float) - np.asarray(c_r, dtype=float)
-        s0 = np.asarray(s_k[:, :, 0], dtype=float)
-        eig0 = np.linalg.eigvalsh(0.5 * (s0 + s0.T))
-        stage_meta.append(
-            {
-                "stage_index": float(idx),
+
+        def _stage_diagnostics() -> dict[str, float | bool | str]:
+            s_arr = np.asarray(s_k, dtype=float)
+            s_batch = np.moveaxis(0.5 * (s_arr + np.swapaxes(s_arr, 0, 1)), -1, 0)
+            reported_val, reported_vec = np.linalg.eigh(s_batch)
+            reported_eig = reported_val
+            s0_eig = reported_eig[0]
+            max_mode_flat = int(np.argmax(reported_val))
+            max_k_index, max_branch = np.unravel_index(max_mode_flat, reported_val.shape)
+            max_mode_vec = reported_vec[max_k_index, :, max_branch]
+            c_k_stage = radial_forward(np.asarray(c_r, dtype=float), transform)
+            c_k_stage = 0.5 * (c_k_stage + np.swapaxes(c_k_stage, 0, 1))
+            sqrt_n_vec = np.sqrt(np.maximum(np.asarray(n_i, dtype=float), 1.0e-300))
+            sqrt_n = np.outer(sqrt_n_vec, sqrt_n_vec)
+            fraction = np.asarray(n_i, dtype=float) / float(np.sum(n_i))
+            number_direction = np.sqrt(np.maximum(fraction, 0.0))
+            number_direction /= max(float(np.linalg.norm(number_direction)), 1.0e-300)
+            number_overlap = float(abs(np.dot(max_mode_vec, number_direction)))
+            instability_channel = (
+                "number_like" if number_overlap >= 1.0 / np.sqrt(2.0) else "concentration_like"
+            )
+            c_tilde = np.moveaxis(c_k_stage, -1, 0) * sqrt_n[np.newaxis, :, :]
+            a_batch = np.eye(c_tilde.shape[1], dtype=float)[np.newaxis, :, :] - c_tilde
+            a_eig = np.linalg.eigvalsh(0.5 * (a_batch + np.swapaxes(a_batch, 1, 2)))
+            h_from_g_k = radial_forward(np.asarray(g_r, dtype=float) - 1.0, transform)
+            s_from_g = (
+                np.eye(s_arr.shape[0], dtype=float)[:, :, np.newaxis]
+                + sqrt_n[:, :, np.newaxis] * h_from_g_k
+            )
+            closure_max = float(np.max(np.abs(s_arr - s_from_g)))
+            residual = float(res_hist[-1]) if res_hist else np.inf
+            projection_mode = str(solve_kwargs.get("s_projection_mode", "clip")).lower().strip()
+            raw_psd = bool(float(np.min(a_eig)) > 0.0)
+            converged = bool(
+                np.isfinite(residual)
+                and residual <= tol_local
+                and raw_psd
+                and np.isfinite(closure_max)
+                and closure_max <= max(10.0 * tol_local, 1.0e-6)
+            )
+            return {
+                "stage_index": float(attempt - 1),
                 "potential_scale": float(scale),
                 "n_iter": float(len(res_hist)),
-                "res_final": float(res_hist[-1]) if len(res_hist) > 0 else np.nan,
-                "s0_min_eig": float(np.min(eig0)),
-                "s0_max_eig": float(np.max(eig0)),
+                "res_final": residual,
+                "s0_min_eig": float(np.min(s0_eig)),
+                "s0_max_eig": float(np.max(s0_eig)),
+                "reported_s_min_eig": float(np.min(reported_eig)),
+                "reported_s_max_eig": float(np.max(reported_eig)),
+                "reported_s_max_k": float(np.asarray(k, dtype=float)[max_k_index]),
+                "max_mode_number_overlap_abs": number_overlap,
+                "max_mode_channel": instability_channel,
+                "oz_denominator_min_eig": float(np.min(a_eig)),
+                "closure_transform_max_abs": closure_max,
+                "raw_oz_positive": raw_psd,
+                "converged": converged,
+                "mixing_scheme": active_scheme,
+                "s_projection_mode": projection_mode,
             }
+
+        meta = _stage_diagnostics()
+
+        # If the inexpensive fixed-point iteration fails, retry the same
+        # state from the last accepted solution with the Newton-Krylov backend.
+        fallback = None if fallback_mixing_scheme is None else str(fallback_mixing_scheme).strip()
+        if not bool(meta["converged"]) and fallback and active_scheme != fallback:
+            active_scheme = fallback
+            solve_kwargs = dict(local_kwargs)
+            solve_kwargs["mixing_scheme"] = active_scheme
+            g_r, s_k, h_r, c_r, res_hist = hnc_solver_multicomponent(
+                r,
+                k,
+                float(scale) * np.asarray(v_ij_r, dtype=float),
+                transform,
+                n_i,
+                temperature_ha,
+                n_init_r=n_init,
+                max_iter=_iteration_cap(active_scheme),
+                **solve_kwargs,
+            )
+            meta = _stage_diagnostics()
+
+        stage_meta.append(meta)
+        if bool(meta["converged"]):
+            last_out = (g_r, s_k, h_r, c_r, res_hist)
+            n_init = np.asarray(h_r, dtype=float) - np.asarray(c_r, dtype=float)
+            last_accepted_scale = float(scale)
+            last_accepted_meta = dict(meta)
+            continue
+
+        gap = float(scale) - float(last_accepted_scale)
+        if bool(adaptive) and 0.5 * gap >= float(min_scale_step):
+            midpoint = float(last_accepted_scale) + 0.5 * gap
+            pending_scales.insert(0, float(scale))
+            pending_scales.insert(0, midpoint)
+            continue
+
+        accepted_mode_note = ""
+        if last_accepted_meta is not None:
+            accepted_mode_note = (
+                " At the largest accepted scale, the largest physical S mode was "
+                f"{str(last_accepted_meta['max_mode_channel'])} at "
+                f"k={float(last_accepted_meta['reported_s_max_k']):.6f} Bohr^-1 "
+                f"with lambda_max={float(last_accepted_meta['reported_s_max_eig']):.3e}."
+            )
+        message = (
+            "Multicomponent OZ/HNC did not reach a physical fixed point: "
+            f"failed potential scale={scale:.6f}, largest accepted scale="
+            f"{last_accepted_scale:.6f}, residual={float(meta['res_final']):.3e}, "
+            f"min eig[I-sqrt(D) C sqrt(D)]="
+            f"{float(meta['oz_denominator_min_eig']):.3e}, "
+            f"closure mismatch={float(meta['closure_transform_max_abs']):.3e}. "
+            f"Largest failed-stage S mode is {str(meta['max_mode_channel'])} at "
+            f"k={float(meta['reported_s_max_k']):.6f} Bohr^-1 with "
+            f"lambda_max={float(meta['reported_s_max_eig']):.3e}."
+            f"{accepted_mode_note} "
+            "The homogeneous atomic-fluid PA-HNC branch is unresolved or unstable; "
+            "PSD projection is not a physical substitute for a root."
         )
+        if bool(require_converged):
+            raise RuntimeError(message)
+        last_out = (g_r, s_k, h_r, c_r, res_hist)
+        n_init = np.asarray(h_r, dtype=float) - np.asarray(c_r, dtype=float)
+        last_accepted_scale = float(scale)
 
     if last_out is None:
         raise RuntimeError("multicomponent continuation produced no stages.")

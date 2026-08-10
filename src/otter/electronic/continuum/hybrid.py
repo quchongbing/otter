@@ -22,7 +22,8 @@ Hybrid density:
 
 References
 ----------
-- C. E. Starrett & D. Saumon (2014), Appendix A/B.
+- :cite:`StarrettSaumon2014`, Appendix A/B. The high-energy ideal-gas tail
+  and its splice controls are Otter numerical implementation choices.
 """
 from __future__ import annotations
 

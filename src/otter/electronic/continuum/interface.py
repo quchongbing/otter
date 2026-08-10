@@ -18,7 +18,8 @@ Continuum density (QM form):
 
 References
 ----------
-- C. E. Starrett & D. Saumon (2014), Eq. (A3).
+- :cite:`StarrettSaumon2014`, Eq. (A3). Energy quadrature and partial-wave
+  truncation controls are Otter implementation choices.
 """
 from abc import ABC, abstractmethod
 from typing import Dict

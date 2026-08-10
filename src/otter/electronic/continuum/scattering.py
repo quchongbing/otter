@@ -16,11 +16,12 @@ Equations
 ---------
   n_c(r) = ∫_0^∞ dε g(ε) Σ_l [ 2(2l+1)/(4π) ] | y_{k,l}(r) / r |^2
   ε = k^2 / 2
-  y_{k,l}(r) = sqrt(2/π) / sqrt(k) r j_l(k r)  (energy normalization for dE)
+  y_{k,l}(r) = sqrt(2k/π) r j_l(k r)  (energy normalization for dE)
 
 References
 ----------
-- C. E. Starrett & D. Saumon (2014), Eq. (A3).
+- :cite:`StarrettSaumon2014`, Eq. (A3). The free-wave baseline, adaptive
+  quadrature, and resonance diagnostics are Otter implementation choices.
 """
 from typing import Dict, Tuple, Any
 import math
@@ -29,10 +30,12 @@ import warnings
 import numpy as np
 import multiprocessing as mp
 from numba import njit
+from scipy.optimize import brentq
 from scipy.special import spherical_jn, spherical_yn, loggamma
 
 try:
     from scipy.special import coulombf, coulombg
+
     _HAVE_COULOMB = True
     _COULOMB_BACKEND = "scipy"
 except Exception:
@@ -40,38 +43,12 @@ except Exception:
     coulombg = None
     _HAVE_COULOMB = False
     _COULOMB_BACKEND = "none"
-    try:
-        import mpmath as mp_math
-    except Exception:
-        mp_math = None
-    if mp_math is not None:
-        def _mp_coulombf(l, eta, rho):
-            return float(mp_math.coulombf(l, eta, rho))
 
-        def _mp_coulombg(l, eta, rho):
-            return float(mp_math.coulombg(l, eta, rho))
-
-        def coulombf(l, eta, rho):
-            rho_arr = np.asarray(rho, dtype=float)
-            if rho_arr.ndim == 0:
-                return _mp_coulombf(l, eta, float(rho_arr))
-            return np.array(
-                [_mp_coulombf(l, eta, float(val)) for val in rho_arr],
-                dtype=float,
-            )
-
-        def coulombg(l, eta, rho):
-            rho_arr = np.asarray(rho, dtype=float)
-            if rho_arr.ndim == 0:
-                return _mp_coulombg(l, eta, float(rho_arr))
-            return np.array(
-                [_mp_coulombg(l, eta, float(val)) for val in rho_arr],
-                dtype=float,
-            )
-
-        _HAVE_COULOMB = True
-        _COULOMB_BACKEND = "mpmath"
-
+# The production basis is deliberately deterministic across SciPy builds:
+# use the analytic large-r Coulomb phase below even when one installation
+# happens to expose exact ``coulombf/g`` functions.  Exact special functions
+# can be compared in diagnostics, but an undeclared optional package must not
+# silently change a continuum density.
 _HAVE_COULOMB_ASYM = True
 
 from .interface import ContinuumModel
@@ -139,10 +116,32 @@ def scattering_default_params() -> Dict[str, Any]:
         "e_min_width": 1e-4,
         "n_e_base": 8,
         "e_base_grid": "linear",
+        # Low-energy threshold guard.  A sqrt(E) base mesh can leave a wide
+        # first panel even when e_min is small; logarithmic anchors make that
+        # panel observable to the ordinary adaptive quadrature.  This is not
+        # an l=0 "resonance" classifier.
+        "near_zero_log_grid": True,
+        "near_zero_log_points_per_decade": 4,
+        "near_zero_log_max_nodes": 24,
+        "near_zero_log_max_energy": 1.0e-2,
         "adaptive_parallel_mode": "batch",
         "adaptive_shards": None,
         "delta_tol": np.pi / 2.0,
         "delta_mode": "max",
+        # Experimental Wilson-inspired narrow-resonance scout.  It remains
+        # off unless adaptive_mode="phase-root" (or "theta-scout") is selected
+        # explicitly.  This is not Wilson et al.'s exact relativistic Theta.
+        "resonance_theta_l_min": 1,
+        "resonance_theta_probe_count": 1,
+        # A finite phase-root scout cannot guarantee an arbitrarily narrow
+        # even pair of roots.  Dyadic levels nevertheless make its achieved
+        # energy resolution explicit and reproducible at bounded cost.
+        "resonance_theta_scan_depth": 3,
+        "resonance_theta_scout_max_extra_nodes": 128,
+        "resonance_theta_root_tol": None,
+        "resonance_theta_sharpness_min": 2.0,
+        "resonance_theta_max_roots": None,
+        "resonance_theta_refine_depth": None,
         "tail_match": False,
         "tail_auto_fallback": "fraction",
         "tail_fit_points": 16,
@@ -161,6 +160,62 @@ def fermi_dirac(energy: np.ndarray, mu: float, temperature: float) -> np.ndarray
     return 1.0 / (1.0 + np.exp(x))
 
 
+def unwrap_scattering_phases(phases: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Return a continuous scattering-phase branch along ``axis``.
+
+    A partial-wave S matrix depends on ``exp(2j*delta_l)``, so ``delta_l`` is
+    defined modulo pi rather than modulo 2*pi.  Unwrapping ``2*delta_l`` and
+    dividing by two avoids spurious pi-sized jumps in phase derivatives and
+    density-of-states diagnostics.
+    """
+    phase_arr = np.asarray(phases, dtype=float)
+    return 0.5 * np.unwrap(2.0 * phase_arr, axis=int(axis))
+
+
+def phase_root_resonance_scout(phases: np.ndarray) -> np.ndarray:
+    """Return a Wilson-inspired phase-root scout for narrow resonances.
+
+    In the asymptotic matching convention used here, an unnormalised regular
+    solution is fitted as
+
+    ``u = c_F F_l + c_G G_l``
+
+    with ``c_F = A cos(delta_l)`` and ``c_G = -A sin(delta_l)``.  Therefore
+
+    ``T_l = c_F / hypot(c_F, c_G) = cos(delta_l)``
+
+    has zeros at a purely irregular exterior solution.  For ``l > 0`` a
+    narrow shape resonance produces a sharp zero of this function and a
+    simultaneous maximum of the energy-normalised interior charge.  The root
+    location is independent of the arbitrary magnitude (and its zero is
+    independent of the sign) of the outward-propagated Numerov solution.
+
+    This criterion is *inspired by*, but is not identical to, the smooth
+    relativistic ``Theta(epsilon)`` construction used to catch sub-grid
+    continuum resonances in Sec. 6 of Wilson et al., *JQSRT* **99**, 658-679
+    (2006).  Wilson's expression combines both Dirac components and additional
+    Wronskians.  Here we only use the non-relativistic regular/irregular fit
+    already available in this code.
+
+    Notes
+    -----
+    This function is deliberately *not* a generic resonance classifier.  An
+    ``l=0`` threshold crossing and a broad ``delta=pi/2`` crossing also give a
+    zero.  Production scouting therefore defaults to ``l >= 1`` and estimates
+    the local slope before carving out a refinement window.
+
+    The adaptive scout only locates roots bracketed by its base/probe nodes.
+    A non-Breit-Wigner feature whose phase rises and falls so that an even
+    number of roots lies wholly between two scout nodes can still be missed.
+    Increasing ``resonance_theta_scan_depth`` reduces, but cannot eliminate,
+    that limitation.  The adaptive integrator reports the smallest and
+    largest achieved scout spacing and whether its node budget was exhausted;
+    a Green-function contour treatment would be the more complete solution
+    for arbitrary ultra-narrow spectra.
+    """
+    return np.cos(np.asarray(phases, dtype=float))
+
+
 def free_electron_y(r: np.ndarray, k: float, l: int) -> np.ndarray:
     """
     Free-electron radial function y_{k,l}(r) with energy normalization.
@@ -168,12 +223,15 @@ def free_electron_y(r: np.ndarray, k: float, l: int) -> np.ndarray:
     Notes
     -----
     A3 integrates over energy dE, so the continuum states are δ(E)-normalized.
-    This yields y ~ sqrt(2/π) / sqrt(k) * r j_l(kr). If integrating over k
-    instead, the normalization changes by a factor of sqrt(k).
+    This yields ``y ~ sqrt(2k/π) r j_l(kr)``.  The extra factor of ``k``
+    relative to k-normalized ``r*j_l`` is required when converting from
+    Dirac-delta normalization in ``k`` to Dirac-delta normalization in
+    ``E=k^2/2``.  If integrating over ``k`` instead, the normalization changes
+    by the corresponding inverse-square-root factor in ``k``.
     """
     if k <= 0.0:
         return np.zeros_like(r)
-    return np.sqrt(2.0 / np.pi) / np.sqrt(k) * r * spherical_jn(l, k * r)
+    return np.sqrt(2.0 * k / np.pi) * r * spherical_jn(l, k * r)
 
 
 def continuum_density_free(r: np.ndarray,
@@ -371,12 +429,288 @@ def continuum_density_scattering_basis(v_eff: np.ndarray,
     meta.update(_scatter_perf_meta(perf_accum, wall_s))
     return n_e_r, meta
 
-from otter.electronic.solvers.free import (
-    _numerov_propagate_sqrt,
-    _numerov_propagate_sqrt_wbase_batch_numba,
-    _numerov_propagate_sqrt_wbase_numba,
-    _prepare_numerov_geometry,
-)
+@njit(cache=True, fastmath=True)
+def _numerov_propagate_sqrt_numba(r: np.ndarray,
+                                  v_eff: np.ndarray,
+                                  energy: float,
+                                  l: int,
+                                  dxi: float,
+                                  rescale_limit: float = 1e6) -> np.ndarray:
+    N = r.size
+    Psi = np.zeros(N, dtype=np.float64)
+    power = float(l) + 0.75
+    origin_charge = max(
+        0.0,
+        -0.5 * (r[0] * v_eff[0] + r[1] * v_eff[1]),
+    )
+    cusp_denom = float(l) + 1.0
+    Psi[0] = r[0] ** power * (1.0 - origin_charge * r[0] / cusp_denom)
+    if Psi[0] < 1e-300:
+        Psi[0] = 1e-300
+    Psi[1] = r[1] ** power * (1.0 - origin_charge * r[1] / cusp_denom)
+    if Psi[1] < 1e-300:
+        Psi[1] = 1e-300
+
+    l_term = 4.0 * float(l) * (float(l) + 1.0) + 0.75
+    h = (dxi ** 2) / 12.0
+    w_prev = 8.0 * r[0] * (energy - v_eff[0]) - l_term / r[0]
+    w_curr = 8.0 * r[1] * (energy - v_eff[1]) - l_term / r[1]
+    for i in range(1, N - 1):
+        w_next = 8.0 * r[i + 1] * (energy - v_eff[i + 1]) - l_term / r[i + 1]
+        Psi[i + 1] = (
+            2.0 * (1.0 - 5.0 * h * w_curr) * Psi[i]
+            - (1.0 + h * w_prev) * Psi[i - 1]
+        ) / (1.0 + h * w_next)
+        if rescale_limit > 0.0 and abs(Psi[i + 1]) > rescale_limit:
+            for j in range(i + 2):
+                Psi[j] /= rescale_limit
+        w_prev = w_curr
+        w_curr = w_next
+
+    u = np.empty(N, dtype=np.float64)
+    for i in range(N):
+        u[i] = np.sqrt(np.sqrt(r[i])) * Psi[i]
+    return u
+
+
+def _numerov_propagate_sqrt(r: np.ndarray,
+                            v_eff: np.ndarray,
+                            energy: float,
+                            l: int,
+                            dxi: float,
+                            rescale_limit: float = 1e6) -> np.ndarray:
+    r = np.asarray(r)
+    if r.size > 0 and r[0] <= 0.0:
+        r = r.copy()
+        r[0] = 1e-14
+    v_eff = np.asarray(v_eff)
+    return _numerov_propagate_sqrt_numba(
+        r, v_eff, float(energy), int(l), float(dxi), float(rescale_limit)
+    )
+
+
+def _prepare_numerov_geometry(r: np.ndarray,
+                              v_eff: np.ndarray) -> dict[str, np.ndarray]:
+    """
+    Precompute grid-only Numerov factors for one continuum solve.
+
+    Parameters
+    ----------
+    r : ndarray
+        Radial grid in Bohr.
+    v_eff : ndarray
+        Effective potential on `r` in Ha.
+
+    Returns
+    -------
+    dict
+        Dictionary containing the sanitized `r`, `v_eff`, and grid factors
+        reused across all continuum energies on the current SCF iterate.
+
+    Notes
+    -----
+    The sqrt-grid Numerov recurrence uses
+
+    `W_i(E,l) = 8 r_i (E - V_i) - (4 l(l+1) + 0.75) / r_i`.
+
+    For a fixed SCF iterate, `r_i` and `V_i` are reused across many energies
+    and partial waves. This helper precomputes the grid-only pieces once so
+    each energy needs only `w_base(E) = 8 r_i E - 8 r_i V_i`, and each
+    l-channel needs only the centrifugal correction.
+    """
+    r_safe = np.asarray(r, dtype=float)
+    if r_safe.size > 0 and r_safe[0] <= 0.0:
+        r_safe = r_safe.copy()
+        r_safe[0] = 1e-14
+    v_eff = np.asarray(v_eff, dtype=float)
+    origin_count = min(4, int(r_safe.size))
+    origin_charge = float(
+        max(0.0, np.median(-r_safe[:origin_count] * v_eff[:origin_count]))
+    )
+    if origin_charge < 1.0e-6:
+        origin_charge = 0.0
+    return {
+        "r": r_safe,
+        "v_eff": v_eff,
+        "r_quarter": np.sqrt(np.sqrt(r_safe)),
+        "inv_r": 1.0 / r_safe,
+        "inv_r2": 1.0 / (r_safe * r_safe),
+        "r8": 8.0 * r_safe,
+        "v_term": -8.0 * r_safe * v_eff,
+        "origin_charge": np.asarray(origin_charge, dtype=float),
+    }
+
+
+@njit(cache=True, fastmath=True)
+def _numerov_propagate_sqrt_wbase_inplace_numba(r: np.ndarray,
+                                                r_quarter: np.ndarray,
+                                                inv_r: np.ndarray,
+                                                w_base: np.ndarray,
+                                                l: int,
+                                                dxi: float,
+                                                out: np.ndarray,
+                                                rescale_limit: float = 1e6,
+                                                origin_charge: float = 0.0) -> None:
+    """
+    Numerov propagation with precomputed grid geometry into a caller buffer.
+
+    Notes
+    -----
+    `w_base[i] = 8 r_i (E - V_i)` is shared by all l-channels at a fixed
+    continuum energy, so the per-channel recurrence only adds the centrifugal
+    correction `-(4 l(l+1)+0.75)/r_i`.
+    """
+    N = r.size
+    do_rescale = rescale_limit > 0.0
+    power = float(l) + 0.75
+    cusp_denom = float(l) + 1.0
+    out[0] = r[0] ** power * (1.0 - origin_charge * r[0] / cusp_denom)
+    if out[0] < 1e-300:
+        out[0] = 1e-300
+    out[1] = r[1] ** power * (1.0 - origin_charge * r[1] / cusp_denom)
+    if out[1] < 1e-300:
+        out[1] = 1e-300
+
+    l_term = 4.0 * float(l) * (float(l) + 1.0) + 0.75
+    h = (dxi ** 2) / 12.0
+    w_prev = w_base[0] - l_term * inv_r[0]
+    w_curr = w_base[1] - l_term * inv_r[1]
+    for i in range(1, N - 1):
+        w_next = w_base[i + 1] - l_term * inv_r[i + 1]
+        out[i + 1] = (
+            2.0 * (1.0 - 5.0 * h * w_curr) * out[i]
+            - (1.0 + h * w_prev) * out[i - 1]
+        ) / (1.0 + h * w_next)
+        if do_rescale and abs(out[i + 1]) > rescale_limit:
+            for j in range(i + 2):
+                out[j] /= rescale_limit
+        w_prev = w_curr
+        w_curr = w_next
+
+    for i in range(N):
+        out[i] *= r_quarter[i]
+
+
+@njit(cache=True, fastmath=True)
+def _numerov_propagate_sqrt_wbase_numba(r: np.ndarray,
+                                        r_quarter: np.ndarray,
+                                        inv_r: np.ndarray,
+                                        w_base: np.ndarray,
+                                        l: int,
+                                        dxi: float,
+                                        rescale_limit: float = 1e6,
+                                        origin_charge: float = 0.0) -> np.ndarray:
+    """
+    Numerov propagation with precomputed grid geometry and per-energy base term.
+    """
+    out = np.empty(r.size, dtype=np.float64)
+    _numerov_propagate_sqrt_wbase_inplace_numba(
+        r,
+        r_quarter,
+        inv_r,
+        w_base,
+        l,
+        dxi,
+        out,
+        rescale_limit=rescale_limit,
+        origin_charge=origin_charge,
+    )
+    return out
+
+
+@njit(cache=True, fastmath=True)
+def _numerov_propagate_sqrt_wbase_batch_numba(r: np.ndarray,
+                                              r_quarter: np.ndarray,
+                                              inv_r: np.ndarray,
+                                              w_base: np.ndarray,
+                                              l_vals: np.ndarray,
+                                              dxi: float,
+                                              rescale_limit: float = 1e6,
+                                              origin_charge: float = 0.0) -> np.ndarray:
+    """
+    Propagate all partial waves for one energy on a shared radial sweep.
+
+    Parameters
+    ----------
+    r : ndarray
+        Radial grid in Bohr.
+    r_quarter : ndarray
+        Precomputed ``r^(1/4)`` factor for the sqrt-grid wavefunction map.
+    inv_r : ndarray
+        Precomputed reciprocal radial grid ``1/r``.
+    w_base : ndarray
+        Shared per-energy term ``8 r (E - V_eff)``.
+    l_vals : ndarray
+        Integer partial waves to propagate for this energy.
+    dxi : float
+        Uniform sqrt-grid spacing.
+    rescale_limit : float, optional
+        Overflow-protection threshold for the raw Numerov solution ``psi``.
+
+    Returns
+    -------
+    ndarray
+        Array with shape ``(n_l, n_r)`` containing ``u_l(r) = r^(1/4) psi_l``.
+
+    Notes
+    -----
+    For a fixed continuum energy, all channels share the same radial sweep and
+    differ only by the centrifugal correction. This helper evolves all
+    requested ``l`` values together so the expensive radial loop is traversed
+    once per energy instead of once per channel.
+    """
+    N = r.size
+    n_l = l_vals.size
+    psi = np.empty((N, n_l), dtype=np.float64)
+    l_terms = np.empty(n_l, dtype=np.float64)
+    w_prev = np.empty(n_l, dtype=np.float64)
+    w_curr = np.empty(n_l, dtype=np.float64)
+    do_rescale = rescale_limit > 0.0
+    h = (dxi ** 2) / 12.0
+
+    # (1) Seed each partial wave with the regular-origin power law.
+    for j in range(n_l):
+        l_float = float(l_vals[j])
+        power = l_float + 0.75
+        cusp_denom = l_float + 1.0
+        psi[0, j] = r[0] ** power * (
+            1.0 - origin_charge * r[0] / cusp_denom
+        )
+        if psi[0, j] < 1e-300:
+            psi[0, j] = 1e-300
+        psi[1, j] = r[1] ** power * (
+            1.0 - origin_charge * r[1] / cusp_denom
+        )
+        if psi[1, j] < 1e-300:
+            psi[1, j] = 1e-300
+        l_terms[j] = 4.0 * l_float * (l_float + 1.0) + 0.75
+        w_prev[j] = w_base[0] - l_terms[j] * inv_r[0]
+        w_curr[j] = w_base[1] - l_terms[j] * inv_r[1]
+
+    # (2) March once over radius and update every l-channel in place.
+    for i in range(1, N - 1):
+        inv_next = inv_r[i + 1]
+        for j in range(n_l):
+            w_next = w_base[i + 1] - l_terms[j] * inv_next
+            psi[i + 1, j] = (
+                2.0 * (1.0 - 5.0 * h * w_curr[j]) * psi[i, j]
+                - (1.0 + h * w_prev[j]) * psi[i - 1, j]
+            ) / (1.0 + h * w_next)
+            if do_rescale and abs(psi[i + 1, j]) > rescale_limit:
+                for k in range(i + 2):
+                    psi[k, j] /= rescale_limit
+            w_prev[j] = w_curr[j]
+            w_curr[j] = w_next
+
+    # (3) Return contiguous row-major u_l(r) buffers for downstream matching.
+    out = np.empty((n_l, N), dtype=np.float64)
+    for i in range(N):
+        scale = r_quarter[i]
+        for j in range(n_l):
+            out[j, i] = psi[i, j] * scale
+    return out
+
+
 
 
 @njit(cache=True, inline="always")
@@ -885,21 +1219,36 @@ def _select_match_window(r: np.ndarray,
         return (i0, i1), meta
 
     rm = r[i0:i1]
-    mask = np.ones_like(rm, dtype=bool)
+    mask_kr = np.ones_like(rm, dtype=bool)
+    mask_v = np.ones_like(rm, dtype=bool)
 
     if match_kr_min is not None:
         kr = k * rm
         kr_min = max(float(match_kr_min), float(l + 1))
-        mask &= kr >= kr_min
+        mask_kr &= kr >= kr_min
 
     if match_v_tol is not None and v_eff is not None:
         v_win = v_eff[i0:i1]
-        mask &= np.abs(v_win) <= float(match_v_tol)
+        mask_v &= np.abs(v_win) <= float(match_v_tol)
 
     meta["used_constraints"] = True
-    slice_rel = _contiguous_tail_slice(mask, max(int(match_min_points), 2))
+    min_points = max(int(match_min_points), 2)
+    slice_rel = _contiguous_tail_slice(mask_kr & mask_v, min_points)
+    if slice_rel is None and match_kr_min is not None:
+        # Exact spherical-Bessel/Coulomb reference functions remain valid in
+        # the non-oscillatory kr<kr_min regime.  If the tail potential itself
+        # is already asymptotic, keep the propagated interacting solution and
+        # relax only the conditioning preference on kr.  Replacing the state
+        # by a free wave here creates an artificial phase jump at
+        # E=(kr_min/r_match)^2/2 and removes the interacting threshold
+        # continuum (as well as any genuine resonant structure).
+        slice_rel = _contiguous_tail_slice(mask_v, min_points)
+        if slice_rel is not None:
+            meta["kr_constraint_relaxed"] = True
+            meta["fallback_reason"] = "kr_only"
     if slice_rel is None:
         meta["fallback"] = True
+        meta["fallback_reason"] = "no_asymptotic_tail_window"
         return (i0, i1), meta
 
     j0, j1 = slice_rel
@@ -932,10 +1281,14 @@ def _coulomb_asymptotic_basis(rm: np.ndarray,
                               eta: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Asymptotic Coulomb basis for large rho = k r.
+
+    The DLMF convention satisfies
+    ``u'' + [1 - 2*eta/rho - l(l+1)/rho**2] u = 0`` and has phase
+    ``rho - eta*log(2*rho) - l*pi/2 + sigma_l``.
     """
     rho = np.maximum(k * rm, 1e-12)
     sigma_l = float(np.imag(loggamma(l + 1.0 + 1j * eta)))
-    phase = rho - 0.5 * l * np.pi + sigma_l + eta * np.log(2.0 * rho)
+    phase = rho - 0.5 * l * np.pi + sigma_l - eta * np.log(2.0 * rho)
     return np.sin(phase), np.cos(phase)
 
 
@@ -980,12 +1333,12 @@ def _resolve_asymptotic_basis_meta(rm: np.ndarray,
         eta = _estimate_coulomb_eta(rm, v_tail, k, coulomb_tol) if v_tail is not None else None
         if eta is None:
             meta["kind"] = "free"
-        elif _HAVE_COULOMB:
-            meta["eta"] = float(eta)
-            meta["coulomb_backend"] = _COULOMB_BACKEND
         elif _HAVE_COULOMB_ASYM:
             meta["eta"] = float(eta)
             meta["coulomb_backend"] = "asymptotic"
+        elif _HAVE_COULOMB:
+            meta["eta"] = float(eta)
+            meta["coulomb_backend"] = _COULOMB_BACKEND
         else:
             meta["kind"] = "free"
 
@@ -1014,7 +1367,7 @@ def _build_asymptotic_basis_from_meta(rm: np.ndarray,
     if kind == "coulomb":
         eta = float(meta.get("eta", 0.0))
         backend = str(meta.get("coulomb_backend", "none")).lower()
-        if backend in ("scipy", "mpmath"):
+        if backend == "scipy":
             rho = k * rm
             return coulombf(l, eta, rho), coulombg(l, eta, rho)
         return _coulomb_asymptotic_basis(rm, k, l, eta)
@@ -1060,6 +1413,18 @@ def _build_asymptotic_basis(rm: np.ndarray,
         meta,
     )
     return u_f, u_g, meta
+
+
+def _normalized_free_scattering_state(
+    r: np.ndarray,
+    energy: float,
+    l: int,
+) -> tuple[np.ndarray, float]:
+    """Return one energy-normalized free radial state and its target amplitude."""
+    k = np.sqrt(2.0 * float(energy))
+    z = k * np.asarray(r, dtype=float)
+    amp_target = np.sqrt(2.0 / np.pi) / np.sqrt(max(k, 1.0e-12))
+    return amp_target * z * spherical_jn(int(l), z), float(amp_target)
 
 
 def _match_scattering_u(u: np.ndarray,
@@ -1143,6 +1508,9 @@ def _match_scattering_u(u: np.ndarray,
     i0, i1 = match_slice
     rm = r[i0:i1]
     if rm.size < 2:
+        if str(match_fallback).lower() == "free":
+            u_free, amp_target = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, amp_target, {**meta, "status": "short_window_free"}
         return u, 0.0, np.nan, {**meta, "status": "short_window"}
 
     v_tail = v_eff[i0:i1] if v_eff is not None else None
@@ -1180,6 +1548,13 @@ def _match_scattering_u(u: np.ndarray,
         u_g,
     )
     if match_status != "ok":
+        if str(match_fallback).lower() == "free":
+            u_free, amp_target = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, amp_target, {
+                **meta,
+                **meta_basis,
+                "status": f"{match_status}_free",
+            }
         return u, 0.0, np.nan, {**meta, **meta_basis, "status": str(match_status)}
 
     k_use = float(meta_basis.get("k_use", k))
@@ -1301,6 +1676,18 @@ def _prepare_match_plan_for_energy(r: np.ndarray,
                     slice_rel = (start_eff, int(run_end))
                     break
 
+            if slice_rel is None and match_kr_min is not None:
+                # The kr threshold is a conditioning preference, not a
+                # physical validity condition: the exact free/Coulomb basis
+                # used below is defined at low kr.  Relax only kr when a
+                # sufficiently long |V|-valid tail window exists.  Preserve
+                # the free fallback for cases where even the potential-tail
+                # criterion cannot be satisfied.
+                for run_start, run_end in true_runs[::-1]:
+                    if int(run_end) - int(run_start) >= min_points:
+                        slice_rel = (int(run_start), int(run_end))
+                        break
+
             if slice_rel is None:
                 fallback_count += 1
                 match_slice_l = (base_i0, base_i1)
@@ -1416,8 +1803,14 @@ def _match_scattering_u_preplanned(u: np.ndarray,
     i0, i1 = match_slice
     rm = r[i0:i1]
     if rm.size < 2:
+        if str(match_fallback).lower() == "free":
+            u_free, amp_target = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, amp_target, {**meta, "status": "short_window_free"}
         return u, 0.0, np.nan, {**meta, "status": "short_window"}
     if basis_meta is None:
+        if str(match_fallback).lower() == "free":
+            u_free, amp_target = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, amp_target, {**meta, "status": "missing_basis_free"}
         return u, 0.0, np.nan, {**meta, "status": "missing_basis_meta"}
 
     basis_meta_local = dict(basis_meta)
@@ -1458,6 +1851,13 @@ def _match_scattering_u_preplanned(u: np.ndarray,
         u_g,
     )
     if match_status != "ok":
+        if str(match_fallback).lower() == "free":
+            u_free, amp_target = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, amp_target, {
+                **meta,
+                **basis_meta_local,
+                "status": f"{match_status}_free",
+            }
         return u, 0.0, np.nan, {**meta, **basis_meta_local, "status": str(match_status)}
 
     k_use = float(basis_meta_local.get("k_use", k))
@@ -1518,6 +1918,9 @@ def _match_scattering_scale_preplanned(u: np.ndarray,
     i0, i1 = match_slice
     rm = r[i0:i1]
     if rm.size < 2 or basis_meta is None:
+        if str(match_fallback).lower() == "free":
+            u_free, _ = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, 1.0
         return None, 0.0, 1.0
 
     kind = str(basis_meta.get("kind", "free")).lower()
@@ -1558,6 +1961,9 @@ def _match_scattering_scale_preplanned(u: np.ndarray,
         u_g,
     )
     if match_status != "ok":
+        if str(match_fallback).lower() == "free":
+            u_free, _ = _normalized_free_scattering_state(r, energy, l)
+            return u_free, 0.0, 1.0
         return None, 0.0, 1.0
 
     k_use = float(basis_meta.get("k_use", k))
@@ -1757,6 +2163,7 @@ def _scattering_density_and_phase(v_eff: np.ndarray,
     inv_r = np.asarray(numerov_geom["inv_r"], dtype=float)
     inv_r2 = np.asarray(numerov_geom["inv_r2"], dtype=float)
     w_base = np.asarray(numerov_geom["r8"], dtype=float) * float(energy) + np.asarray(numerov_geom["v_term"], dtype=float)
+    origin_charge = float(np.asarray(numerov_geom.get("origin_charge", 0.0)))
 
     # (2) Propagate the partial waves for this energy, then match and
     # accumulate them one channel at a time.
@@ -1775,6 +2182,7 @@ def _scattering_density_and_phase(v_eff: np.ndarray,
             l_vals,
             grid_step,
             rescale_limit=rescale_limit,
+            origin_charge=origin_charge,
         )
         if perf_accum is not None:
             perf_accum["propagate_s"] = float(perf_accum.get("propagate_s", 0.0) + (time.perf_counter() - t_stage))
@@ -1789,6 +2197,7 @@ def _scattering_density_and_phase(v_eff: np.ndarray,
                 l,
                 grid_step,
                 rescale_limit=rescale_limit,
+                origin_charge=origin_charge,
             )
             if perf_accum is not None:
                 perf_accum["propagate_s"] = float(perf_accum.get("propagate_s", 0.0) + (time.perf_counter() - t_stage))
@@ -2279,6 +2688,10 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                                           e_min_width: float = 1e-4,
                                           n_e_base: int = 8,
                                           e_base_grid: str = "linear",
+                                          near_zero_log_grid: bool = True,
+                                          near_zero_log_points_per_decade: int = 4,
+                                          near_zero_log_max_nodes: int = 24,
+                                          near_zero_log_max_energy: float | None = 1.0e-2,
                                           resonance_tol: float | None = None,
                                           resonance_r_fractions: tuple[float, ...] | None = (0.25, 0.5, 0.75),
                                           resonance_floor: float = 1e-8,
@@ -2296,7 +2709,15 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                                           adaptive_shards: int | None = None,
                                           adaptive_shard_policy: str = "egrid",
                                           apply_occ: bool = True,
-                                          collect_perf: bool = False) -> tuple[np.ndarray, dict]:
+                                          collect_perf: bool = False,
+                                          resonance_theta_l_min: int = 1,
+                                          resonance_theta_probe_count: int = 1,
+                                          resonance_theta_scan_depth: int = 3,
+                                          resonance_theta_scout_max_extra_nodes: int | None = 128,
+                                          resonance_theta_root_tol: float | None = None,
+                                          resonance_theta_sharpness_min: float = 2.0,
+                                          resonance_theta_max_roots: int | None = None,
+                                          resonance_theta_refine_depth: int | None = None) -> tuple[np.ndarray, dict]:
     """
     Adaptive energy integration for scattering continuum using Simpson refinement.
 
@@ -2306,9 +2727,23 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
     - "simpson": recursive Simpson refinement using error + resonance/delta flags.
     - "bisection": use phase-shift bisection to locate resonance windows, then
       apply local Simpson refinement only inside those windows.
+    - "phase-root" (alias "theta-scout"): explicitly scout the
+      normalized regular matching coefficient
+      ``T_l=cos(delta_l)`` for ``l>=resonance_theta_l_min``.  Bracketed
+      zeros are located with Brent's method and symmetric local Simpson panels
+      are carved around them.  This is a non-relativistic phase-root guard
+      inspired by, but not mathematically identical to, the relativistic
+      supplementary resonance detector of Wilson et al., JQSRT 99, 658-679
+      (2006), Sec. 6.  The default "simpson" path is unchanged.
+      The base/probe nodes are supplemented by a bounded dyadic scan.  Its
+      reported maximum spacing is a resolution diagnostic, not a guarantee
+      for features narrower than that spacing.
     e_base_grid controls how the initial base nodes are distributed:
     - "linear": uniform in energy E.
     - "sqrt": uniform in sqrt(E), producing denser low-energy sampling.
+    near_zero_log_grid adds a few logarithmic anchors between e_min and the
+    first ordinary base node.  It protects l=0 threshold quadrature without
+    classifying an s-wave threshold crossing as a shape resonance.
 
     energy_cache can be supplied to reuse (n_e, delta) evaluations across
     repeated calls with the same V_eff and energy bounds.
@@ -2335,15 +2770,49 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
     if grid_step is None:
         grid_step = float(np.sqrt(r[1]) - np.sqrt(r[0]))
 
-    adaptive_mode = str(adaptive_mode).lower()
+    adaptive_mode = str(adaptive_mode).lower().strip()
     use_bisection = adaptive_mode in ("bisection", "bisection_simpson", "bisection-local")
-    delta_tol_local = None if use_bisection else delta_tol
+    use_theta_detector = adaptive_mode in ("phase-root", "theta-scout", "theta-local")
+    delta_tol_local = None if (use_bisection or use_theta_detector) else delta_tol
+
+    theta_l_min = max(int(resonance_theta_l_min), 0)
+    theta_probe_count = max(int(resonance_theta_probe_count), 0)
+    theta_scan_depth = max(int(resonance_theta_scan_depth), 0)
+    theta_scout_max_extra_nodes = (
+        None
+        if resonance_theta_scout_max_extra_nodes is None
+        else max(int(resonance_theta_scout_max_extra_nodes), 0)
+    )
+    theta_sharpness_min = max(float(resonance_theta_sharpness_min), 0.0)
+    theta_root_tol = resonance_theta_root_tol
+    theta_refine_depth = resonance_theta_refine_depth
+    near_zero_enabled = bool(near_zero_log_grid)
+    near_zero_points_per_decade = max(int(near_zero_log_points_per_decade), 0)
+    near_zero_max_nodes = max(int(near_zero_log_max_nodes), 0)
+    near_zero_max_energy = (
+        None
+        if near_zero_log_max_energy is None
+        else max(float(near_zero_log_max_energy), 0.0)
+    )
 
     cache = energy_cache if energy_cache is not None else {}
     cache_init = len(cache)
     max_depth = 0
     resonance_hits = 0
     delta_hits = 0
+    theta_candidates = 0
+    theta_rejected = 0
+    theta_root_evals = 0
+    theta_roots: list[dict[str, float | int]] = []
+    theta_root_clusters: list[dict] = []
+    theta_scout_base_node_count = 0
+    theta_scout_node_count = 0
+    theta_scout_extra_node_count = 0
+    theta_scout_completed_depth = 0
+    theta_scout_budget_exhausted = False
+    theta_scout_min_spacing: float | None = None
+    theta_scout_max_spacing: float | None = None
+    near_zero_anchors: set[float] = set()
     cache_hits = 0
     n_eval_new = 0
     use_parallel = n_jobs is not None and int(n_jobs) > 1
@@ -2352,11 +2821,31 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
     t_wall = time.perf_counter() if bool(collect_perf) else 0.0
     perf_accum = _init_scatter_perf_accum() if bool(collect_perf) and not use_parallel else None
     pool = None
-    parallel_mode = str(adaptive_parallel_mode).lower().strip()
+    # The Wilson-inspired phase-root mode refines explicitly carved resonance
+    # windows while retaining adaptive integration in the smooth gaps,
+    # so it can safely use a smaller local minimum width/deeper recursion than
+    # the ordinary global Simpson path.
+    refine_min_width = float(e_min_width)
+    refine_depth_limit = int(e_max_depth)
+    parallel_mode_requested = str(adaptive_parallel_mode).lower().strip()
+    parallel_mode = parallel_mode_requested
     if parallel_mode not in ("batch", "shard"):
         raise ValueError(
             f"adaptive_parallel_mode must be 'batch' or 'shard', got '{adaptive_parallel_mode}'."
         )
+    theta_shard_mode_forced_batch = bool(use_theta_detector and parallel_mode == "shard")
+    if theta_shard_mode_forced_batch:
+        # A root at a shard edge cannot be given a symmetric local panel, and
+        # independent workers cannot cluster coincident/nearby roots across
+        # that edge.  Keep parallel energy evaluation, but build the scout and
+        # resonance windows globally in the parent solve.
+        warnings.warn(
+            "phase-root resonance scouting is incompatible with independent "
+            "energy shards; forcing adaptive_parallel_mode='batch' so roots "
+            "and symmetric windows are resolved on the full energy interval.",
+            RuntimeWarning,
+        )
+        parallel_mode = "batch"
     shard_policy = str(adaptive_shard_policy).lower().strip()
     if shard_policy not in ("egrid", "cost"):
         raise ValueError(
@@ -2385,6 +2874,52 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
         raise ValueError(
             f"Unsupported e_base_grid='{mode}'. Expected 'linear' or 'sqrt'."
         )
+
+    def _build_integration_nodes(e_lo: float, e_hi: float, n_base: int, mode: str) -> np.ndarray:
+        """Build base nodes and resolve the otherwise-wide threshold panel.
+
+        The centrifugal-barrier resonance scout intentionally starts at l=1.
+        Near-threshold s-wave structure is instead exposed to the ordinary
+        error-controlled quadrature by inserting a small logarithmic mesh in
+        the first energy panel.  See Starrett and Saumon, *High Energy Density
+        Physics* (2014), Appendix B, and their cited Wilson et al. algorithm
+        for the need for adaptive continuum energy meshes.  This logarithmic
+        guard is a numerical implementation detail of that requirement, not
+        an additional physical resonance model.
+        """
+        base = _build_base_nodes(e_lo, e_hi, n_base, mode)
+        if (
+            not near_zero_enabled
+            or near_zero_points_per_decade <= 0
+            or near_zero_max_nodes <= 0
+            or base.size < 2
+            or e_lo <= 0.0
+        ):
+            return base
+
+        first = float(base[1])
+        upper = first
+        if near_zero_max_energy is not None:
+            if float(e_lo) >= near_zero_max_energy:
+                return base
+            upper = min(upper, near_zero_max_energy)
+        ratio = upper / float(e_lo)
+        if (not np.isfinite(ratio)) or ratio <= 1.0 + 16.0 * np.finfo(float).eps:
+            return base
+
+        decades = max(float(np.log10(ratio)), 0.0)
+        n_log_segments = min(
+            near_zero_max_nodes,
+            max(1, int(np.ceil(near_zero_points_per_decade * decades))),
+        )
+        log_nodes = np.geomspace(float(e_lo), upper, n_log_segments + 1)[1:]
+        merged = np.unique(np.concatenate((base, log_nodes))).astype(float)
+        base_set = set(float(val) for val in base)
+        for val in merged:
+            val_f = float(val)
+            if val_f not in base_set:
+                near_zero_anchors.add(val_f)
+        return merged
 
     def _estimate_energy_cost(e_val: float) -> float:
         """
@@ -2566,6 +3101,169 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
             return float(abs(np.sum(weights * d1) - np.sum(weights * d0)))
         return float(np.max(np.abs(d1 - d0)))
 
+    def active_l_cap(e_val: float) -> int:
+        """Return the channels that are genuinely evaluated at one energy."""
+        return _compute_l_cap(
+            float(e_val),
+            l_max,
+            r,
+            l_pad,
+            match_slice,
+            match_r_cut,
+            match_fraction,
+            match_fraction_mode,
+            match_width,
+            match_min_points,
+            match_kr_min,
+            match_v_tol,
+            v_eff,
+            l_cap_strategy,
+        )
+
+    def theta_value(e_val: float, l_val: int) -> float:
+        """Evaluate one normalised regular matching coefficient."""
+        nonlocal theta_root_evals
+        _, d_val = eval_energy_single(float(e_val))
+        theta_root_evals += 1
+        return float(phase_root_resonance_scout(d_val)[int(l_val)])
+
+    def locate_theta_roots(
+        scout_nodes: np.ndarray,
+        scout_deltas: list[np.ndarray],
+    ) -> list[dict[str, float | int]]:
+        """Locate bracketed normalized regular-coefficient roots.
+
+        The regular/irregular fit coefficients are smooth even when the
+        energy-normalised interior density is too narrow for a quadrature
+        estimator to notice.  Looking for their regular-coefficient zero is
+        therefore an independent guard against false quadrature convergence,
+        following Wilson et al. (2006), Sec. 6.
+        """
+        nonlocal theta_candidates
+        nonlocal theta_rejected
+
+        nodes = np.asarray(scout_nodes, dtype=float)
+        if nodes.size < 2:
+            return []
+        theta_rows = [phase_root_resonance_scout(d) for d in scout_deltas]
+        roots_local: list[dict[str, float | int]] = []
+        root_tol_local = float(theta_root_tol)
+
+        for idx in range(nodes.size - 1):
+            ea = float(nodes[idx])
+            eb = float(nodes[idx + 1])
+            if eb <= ea:
+                continue
+            # Do not interpret the artificial delta=0 entries above an
+            # energy-dependent l cap as matching coefficients.  Requiring the
+            # channel at both ends also avoids roots created by a moving cap.
+            cap = min(active_l_cap(ea), active_l_cap(eb))
+            if cap < theta_l_min:
+                continue
+            for l_val in range(theta_l_min, cap + 1):
+                ta = float(theta_rows[idx][l_val])
+                tb = float(theta_rows[idx + 1][l_val])
+                if not (np.isfinite(ta) and np.isfinite(tb)):
+                    continue
+                if ta == 0.0:
+                    e_root = ea
+                elif tb == 0.0:
+                    e_root = eb
+                elif ta * tb < 0.0:
+                    theta_candidates += 1
+                    try:
+                        e_root = float(
+                            brentq(
+                                lambda e_trial: theta_value(e_trial, l_val),
+                                ea,
+                                eb,
+                                xtol=root_tol_local,
+                                rtol=4.0 * np.finfo(float).eps,
+                                maxiter=100,
+                            )
+                        )
+                    except (ValueError, RuntimeError):
+                        theta_rejected += 1
+                        continue
+                else:
+                    continue
+
+                # Estimate the local energy scale from Theta'(E_r).  For a
+                # Breit-Wigner-like shape resonance, 1/|Theta'| is its HWHM
+                # to leading order.  A finite probe that overestimates an
+                # ultra-narrow width is safe: it merely carves a wider panel.
+                panel_width = eb - ea
+                h_probe = max(8.0 * root_tol_local, 0.05 * panel_width)
+                slope = np.nan
+                previous_slope = np.nan
+                # A single panel-scale secant can overestimate an ultra-narrow
+                # resonance width by orders of magnitude.  Halve the probe
+                # until the local derivative stabilizes.  Broad crossings
+                # converge after one comparison; narrow ones spend a handful
+                # of cheap scalar phase evaluations but greatly reduce the
+                # subsequent density-quadrature window.
+                for _ in range(18):
+                    e_left = max(ea, e_root - h_probe)
+                    e_right = min(eb, e_root + h_probe)
+                    if e_right <= e_left:
+                        break
+                    t_left = theta_value(e_left, l_val)
+                    t_right = theta_value(e_right, l_val)
+                    slope = abs((t_right - t_left) / (e_right - e_left))
+                    if np.isfinite(previous_slope) and np.isfinite(slope):
+                        rel_change = abs(slope - previous_slope) / max(
+                            slope,
+                            np.finfo(float).tiny,
+                        )
+                        if rel_change <= 0.03:
+                            break
+                    if h_probe <= 16.0 * root_tol_local:
+                        break
+                    previous_slope = slope
+                    h_probe = max(0.5 * h_probe, 8.0 * root_tol_local)
+                sharpness = slope * panel_width
+                if (not np.isfinite(slope)) or sharpness <= theta_sharpness_min:
+                    theta_rejected += 1
+                    continue
+                width_est = 1.0 / max(slope, np.finfo(float).tiny)
+                roots_local.append(
+                    {
+                        "energy": float(e_root),
+                        "l": int(l_val),
+                        "theta_slope": float(slope),
+                        "theta_sharpness": float(sharpness),
+                        "width_est": float(width_est),
+                        "bracket_lo": float(ea),
+                        "bracket_hi": float(eb),
+                    }
+                )
+
+        # A root on a scout-node boundary is seen from both adjacent panels.
+        # Keep the sharper duplicate deterministically.
+        roots_local.sort(key=lambda item: (int(item["l"]), float(item["energy"])))
+        deduped: list[dict[str, float | int]] = []
+        for item in roots_local:
+            if (
+                deduped
+                and int(item["l"]) == int(deduped[-1]["l"])
+                and abs(float(item["energy"]) - float(deduped[-1]["energy"]))
+                <= 4.0 * root_tol_local
+            ):
+                if float(item["theta_slope"]) > float(deduped[-1]["theta_slope"]):
+                    deduped[-1] = item
+                continue
+            deduped.append(item)
+
+        if resonance_theta_max_roots is not None and len(deduped) > int(resonance_theta_max_roots):
+            selected = sorted(
+                deduped,
+                key=lambda item: float(item["theta_slope"]),
+                reverse=True,
+            )[: max(int(resonance_theta_max_roots), 0)]
+            theta_rejected += len(deduped) - len(selected)
+            deduped = sorted(selected, key=lambda item: float(item["energy"]))
+        return deduped
+
     def integrate_interval(e0: float,
                            e1: float,
                            n0: np.ndarray,
@@ -2606,7 +3304,11 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 delta_flag = True
                 delta_hits += 1
 
-        if (err > e_tol or resonance_flag or delta_flag) and depth < e_max_depth and (e1 - e0) > e_min_width:
+        if (
+            (err > e_tol or resonance_flag or delta_flag)
+            and depth < refine_depth_limit
+            and (e1 - e0) > refine_min_width
+        ):
             left = integrate_interval(e0, em, n0, nm, d0, dm, depth + 1)
             right = integrate_interval(em, e1, nm, n1, dm, d1, depth + 1)
             return left + right
@@ -2660,7 +3362,11 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                         delta_flag = True
                         delta_hits += 1
 
-                if (err > e_tol or resonance_flag or delta_flag) and depth < e_max_depth and (e1 - e0) > e_min_width:
+                if (
+                    (err > e_tol or resonance_flag or delta_flag)
+                    and depth < refine_depth_limit
+                    and (e1 - e0) > refine_min_width
+                ):
                     stack.append((e0, em, n0, nm, d0, dm, depth + 1))
                     stack.append((em, e1, nm, n1, dm, d1, depth + 1))
                 else:
@@ -2734,6 +3440,25 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
 
     e0 = max(float(e_min), 1e-12)
     e1 = float(e_max)
+    if theta_root_tol is None:
+        # Root location, unlike the density quadrature, is a smooth scalar
+        # problem.  Resolve it more tightly than the ordinary panel width so a
+        # symmetric panel can be centred on a sub-grid resonance.
+        theta_root_tol = max(
+            1.0e-12,
+            min(1.0e-8, 1.0e-2 * float(e_min_width)),
+        )
+    else:
+        theta_root_tol = max(float(theta_root_tol), 4.0 * np.finfo(float).eps)
+    if use_theta_detector:
+        refine_min_width = min(
+            float(e_min_width),
+            max(4.0 * float(theta_root_tol), 16.0 * np.finfo(float).eps),
+        )
+        refine_depth_limit = max(
+            int(e_max_depth),
+            int(theta_refine_depth) if theta_refine_depth is not None else int(e_max_depth) + 8,
+        )
 
     # Coarse-grained parallel mode: split energy domain into disjoint shards
     # and solve each shard independently in its own process.
@@ -2805,6 +3530,10 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 "e_min_width": e_min_width,
                 "n_e_base": n_e_base_shard,
                 "e_base_grid": e_base_grid,
+                "near_zero_log_grid": near_zero_enabled,
+                "near_zero_log_points_per_decade": near_zero_points_per_decade,
+                "near_zero_log_max_nodes": near_zero_max_nodes,
+                "near_zero_log_max_energy": near_zero_max_energy,
                 "resonance_tol": resonance_tol,
                 "resonance_r_fractions": resonance_r_fractions,
                 "resonance_floor": resonance_floor,
@@ -2816,6 +3545,13 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 "resonance_window_min": resonance_window_min,
                 "resonance_window_max": resonance_window_max,
                 "resonance_max_windows": resonance_max_windows,
+                "resonance_theta_l_min": theta_l_min,
+                "resonance_theta_probe_count": theta_probe_count,
+                "resonance_theta_scan_depth": theta_scan_depth,
+                "resonance_theta_root_tol": theta_root_tol,
+                "resonance_theta_sharpness_min": theta_sharpness_min,
+                "resonance_theta_max_roots": resonance_theta_max_roots,
+                "resonance_theta_refine_depth": theta_refine_depth,
                 "energy_cache": None,
                 "n_jobs": None,
                 "adaptive_parallel_mode": "batch",
@@ -2824,10 +3560,23 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 "apply_occ": apply_occ,
                 "_collect_cache_samples": bool(collect_cache_samples),
             }
-            tasks = [
-                (i, float(edges[i]), float(edges[i + 1]), base_kwargs)
-                for i in range(shard_count)
-            ]
+            tasks = []
+            for i in range(shard_count):
+                shard_kwargs = dict(base_kwargs)
+                if theta_scout_max_extra_nodes is None:
+                    shard_budget = None
+                else:
+                    # Preserve a global extra-node bound rather than silently
+                    # multiplying the configured budget by the shard count.
+                    quotient, remainder = divmod(
+                        int(theta_scout_max_extra_nodes),
+                        int(shard_count),
+                    )
+                    shard_budget = quotient + (1 if i < remainder else 0)
+                shard_kwargs["resonance_theta_scout_max_extra_nodes"] = shard_budget
+                tasks.append(
+                    (i, float(edges[i]), float(edges[i + 1]), shard_kwargs)
+                )
 
             ctx = mp.get_context("fork")
             with ctx.Pool(processes=int(n_jobs)) as shard_pool:
@@ -2845,6 +3594,19 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
             bisect_intervals_sum = 0
             bisect_samples_sum = 0
             bisect_depth_max = 0
+            theta_candidates_sum = 0
+            theta_rejected_sum = 0
+            theta_root_evals_sum = 0
+            theta_roots_agg: list[dict[str, float | int]] = []
+            theta_root_clusters_agg: list[dict] = []
+            theta_scout_base_nodes_sum = 0
+            theta_scout_nodes_sum = 0
+            theta_scout_extra_nodes_sum = 0
+            theta_scout_completed_depth_min: int | None = None
+            theta_scout_budget_exhausted_any = False
+            theta_scout_min_spacing_agg = np.inf
+            theta_scout_max_spacing_agg = 0.0
+            near_zero_anchors_agg: set[float] = set()
             shard_meta = []
             merged_cache_count = 0
             skipped_cache_count = 0
@@ -2861,6 +3623,45 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 bisect_intervals_sum += int(m_part.get("bisection_intervals", 0))
                 bisect_samples_sum += int(m_part.get("bisection_samples", 0))
                 bisect_depth_max = max(bisect_depth_max, int(m_part.get("bisection_max_depth", 0)))
+                theta_candidates_sum += int(m_part.get("theta_candidates", 0))
+                theta_rejected_sum += int(m_part.get("theta_rejected", 0))
+                theta_root_evals_sum += int(m_part.get("theta_root_evals", 0))
+                for item in m_part.get("theta_roots", []):
+                    item_copy = dict(item)
+                    item_copy["shard"] = int(idx)
+                    theta_roots_agg.append(item_copy)
+                for cluster in m_part.get("theta_root_clusters", []):
+                    cluster_copy = dict(cluster)
+                    cluster_copy["shard"] = int(idx)
+                    theta_root_clusters_agg.append(cluster_copy)
+                theta_scout_base_nodes_sum += int(m_part.get("theta_scout_base_node_count", 0))
+                theta_scout_nodes_sum += int(m_part.get("theta_scout_node_count", 0))
+                theta_scout_extra_nodes_sum += int(m_part.get("theta_scout_extra_node_count", 0))
+                completed_part = int(m_part.get("theta_scout_completed_depth", 0))
+                theta_scout_completed_depth_min = (
+                    completed_part
+                    if theta_scout_completed_depth_min is None
+                    else min(theta_scout_completed_depth_min, completed_part)
+                )
+                theta_scout_budget_exhausted_any = bool(
+                    theta_scout_budget_exhausted_any
+                    or m_part.get("theta_scout_budget_exhausted", False)
+                )
+                min_spacing_part = m_part.get("theta_scout_min_spacing", None)
+                max_spacing_part = m_part.get("theta_scout_max_spacing", None)
+                if min_spacing_part is not None and np.isfinite(float(min_spacing_part)):
+                    theta_scout_min_spacing_agg = min(
+                        theta_scout_min_spacing_agg,
+                        float(min_spacing_part),
+                    )
+                if max_spacing_part is not None and np.isfinite(float(max_spacing_part)):
+                    theta_scout_max_spacing_agg = max(
+                        theta_scout_max_spacing_agg,
+                        float(max_spacing_part),
+                    )
+                near_zero_anchors_agg.update(
+                    float(val) for val in m_part.get("near_zero_log_anchors", [])
+                )
 
                 # Merge shard-local basis samples into caller cache. This is
                 # required for inner-mu basis reuse where caller builds
@@ -2910,8 +3711,51 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 "bisection_intervals": int(bisect_intervals_sum),
                 "bisection_samples": int(bisect_samples_sum),
                 "bisection_max_depth": int(bisect_depth_max),
+                "theta_detector_enabled": adaptive_mode in ("phase-root", "theta-scout", "theta-local"),
+                "theta_fallback": bool(
+                    n_windows_sum == 0
+                    and adaptive_mode in ("phase-root", "theta-scout", "theta-local")
+                ),
+                "theta_candidates": int(theta_candidates_sum),
+                "theta_rejected": int(theta_rejected_sum),
+                "theta_root_evals": int(theta_root_evals_sum),
+                "theta_root_tol": float(theta_root_tol),
+                "theta_refine_min_width": float(refine_min_width),
+                "theta_refine_depth": int(refine_depth_limit),
+                "theta_roots": sorted(theta_roots_agg, key=lambda item: float(item.get("energy", 0.0))),
+                "theta_root_clusters": sorted(
+                    theta_root_clusters_agg,
+                    key=lambda item: (int(item.get("shard", 0)), float(item.get("energy", 0.0))),
+                ),
+                "theta_scout_requested_depth": int(theta_scan_depth),
+                "theta_scout_completed_depth": int(theta_scout_completed_depth_min or 0),
+                "theta_scout_base_node_count": int(theta_scout_base_nodes_sum),
+                "theta_scout_node_count": int(theta_scout_nodes_sum),
+                "theta_scout_extra_node_count": int(theta_scout_extra_nodes_sum),
+                "theta_scout_max_extra_nodes": (
+                    None
+                    if theta_scout_max_extra_nodes is None
+                    else int(theta_scout_max_extra_nodes)
+                ),
+                "theta_scout_budget_exhausted": bool(theta_scout_budget_exhausted_any),
+                "theta_scout_min_spacing": (
+                    float(theta_scout_min_spacing_agg)
+                    if np.isfinite(theta_scout_min_spacing_agg)
+                    else None
+                ),
+                "theta_scout_max_spacing": (
+                    float(theta_scout_max_spacing_agg)
+                    if theta_scout_max_spacing_agg > 0.0
+                    else None
+                ),
+                "theta_scout_limitation": "finite_mesh_no_arbitrary_subgrid_guarantee",
+                "near_zero_log_grid": bool(near_zero_enabled),
+                "near_zero_log_anchor_count": int(len(near_zero_anchors_agg)),
+                "near_zero_log_anchors": sorted(near_zero_anchors_agg),
                 "apply_occ": bool(apply_occ),
                 "adaptive_parallel_mode": "shard",
+                "adaptive_parallel_mode_requested": str(parallel_mode_requested),
+                "theta_shard_mode_forced_batch": bool(theta_shard_mode_forced_batch),
                 "adaptive_shards": int(shard_count),
                 "adaptive_shard_policy": str(shard_policy),
                 "shard_meta": shard_meta,
@@ -2929,9 +3773,112 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
     bisection_depth_max = 0
     max_metric = 0.0
 
+    def build_theta_scout_nodes(base_nodes: np.ndarray) -> tuple[np.ndarray, dict]:
+        """Return a bounded multiresolution phase-root scout mesh.
+
+        ``probe_count`` is retained for backward compatibility.  Dyadic
+        levels then fill each interval in a nested order, so increasing the
+        requested depth never moves an existing scout point.  The extra-node
+        budget excludes mandatory base/log anchors and is consumed uniformly
+        across the full energy range at each level.
+
+        This is a deterministic resolution guard, not a proof that a panel is
+        root-free.  In particular, an even number of roots can remain hidden
+        inside any final gap.  Wilson et al. (JQSRT 99, 658-679, 2006, Sec. 6)
+        instead interpolate their smoother boundary ``a(E), b(E)`` functions
+        and analytic relativistic ``Theta(E)``; the present code does not yet
+        implement that exact construction.
+        """
+        base = np.asarray(sorted(set(float(val) for val in base_nodes)), dtype=float)
+        nodes = set(float(val) for val in base)
+        max_extra = theta_scout_max_extra_nodes
+        extra_used = 0
+        budget_exhausted = False
+
+        def add_candidates(candidates: list[float]) -> bool:
+            """Add one nested level; return whether the whole level fit."""
+            nonlocal extra_used
+            nonlocal budget_exhausted
+
+            pending = np.asarray(
+                sorted(set(float(val) for val in candidates if float(val) not in nodes)),
+                dtype=float,
+            )
+            if pending.size == 0:
+                return True
+            if max_extra is None:
+                selected = pending
+            else:
+                remaining = max(int(max_extra) - int(extra_used), 0)
+                if remaining <= 0:
+                    budget_exhausted = True
+                    return False
+                if pending.size <= remaining:
+                    selected = pending
+                else:
+                    # Spread a partial level over the whole domain instead of
+                    # preferentially resolving only the lowest-energy panels.
+                    idx = np.floor(
+                        (np.arange(remaining, dtype=float) + 0.5)
+                        * float(pending.size)
+                        / float(remaining)
+                    ).astype(int)
+                    idx = np.clip(idx, 0, pending.size - 1)
+                    selected = pending[idx]
+                    budget_exhausted = True
+            for val in selected:
+                nodes.add(float(val))
+            extra_used += int(selected.size)
+            return bool(selected.size == pending.size)
+
+        # Preserve the old equally-spaced probe semantics.  Common values
+        # (one midpoint, or quarter points) are automatically reused by the
+        # nested dyadic scan below and therefore consume the budget only once.
+        probe_candidates: list[float] = []
+        if theta_probe_count > 0:
+            for idx in range(base.size - 1):
+                ea = float(base[idx])
+                eb = float(base[idx + 1])
+                for i_probe in range(1, theta_probe_count + 1):
+                    frac = i_probe / float(theta_probe_count + 1)
+                    probe_candidates.append(ea + frac * (eb - ea))
+        add_candidates(probe_candidates)
+
+        completed_depth = 0
+        for depth in range(1, theta_scan_depth + 1):
+            denominator = 1 << depth
+            level_candidates: list[float] = []
+            for idx in range(base.size - 1):
+                ea = float(base[idx])
+                eb = float(base[idx + 1])
+                width = eb - ea
+                for numerator in range(1, denominator, 2):
+                    level_candidates.append(ea + (numerator / denominator) * width)
+            if add_candidates(level_candidates):
+                completed_depth = depth
+
+        scout = np.asarray(sorted(nodes), dtype=float)
+        spacing = np.diff(scout)
+        return scout, {
+            "base_node_count": int(base.size),
+            "node_count": int(scout.size),
+            "extra_node_count": int(extra_used),
+            "requested_depth": int(theta_scan_depth),
+            "completed_depth": int(completed_depth),
+            "max_extra_nodes": (
+                None if theta_scout_max_extra_nodes is None else int(theta_scout_max_extra_nodes)
+            ),
+            "budget_exhausted": bool(budget_exhausted),
+            "min_spacing": float(np.min(spacing)) if spacing.size else None,
+            "max_spacing": float(np.max(spacing)) if spacing.size else None,
+        }
+
     def _do_integration() -> np.ndarray:
         nonlocal use_bisection
+        nonlocal use_theta_detector
         nonlocal windows
+        nonlocal theta_roots
+        nonlocal theta_root_clusters
         nonlocal bisection_samples
         nonlocal bisection_intervals
         nonlocal bisection_depth_max
@@ -2939,9 +3886,182 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
         nonlocal resonance_window_min
         nonlocal resonance_window_max
         nonlocal n_e_base
+        nonlocal theta_scout_base_node_count
+        nonlocal theta_scout_node_count
+        nonlocal theta_scout_extra_node_count
+        nonlocal theta_scout_completed_depth
+        nonlocal theta_scout_budget_exhausted
+        nonlocal theta_scout_min_spacing
+        nonlocal theta_scout_max_spacing
+
+        if use_theta_detector:
+            # Scout the matching-coefficient root function on base/log nodes,
+            # legacy probes, and a bounded nested dyadic mesh.  These nodes are
+            # independent of density curvature, so isolated sign-changing
+            # roots cannot hide merely by missing Simpson midpoints.
+            e_base = _build_integration_nodes(e0, e1, int(n_e_base), e_base_grid)
+            scout_nodes, scout_meta = build_theta_scout_nodes(e_base)
+            theta_scout_base_node_count = int(scout_meta["base_node_count"])
+            theta_scout_node_count = int(scout_meta["node_count"])
+            theta_scout_extra_node_count = int(scout_meta["extra_node_count"])
+            theta_scout_completed_depth = int(scout_meta["completed_depth"])
+            theta_scout_budget_exhausted = bool(scout_meta["budget_exhausted"])
+            theta_scout_min_spacing = scout_meta["min_spacing"]
+            theta_scout_max_spacing = scout_meta["max_spacing"]
+            scout_vals = eval_energy_batch(scout_nodes.tolist())
+            scout_deltas = [d_val for _, d_val in scout_vals]
+            theta_roots = locate_theta_roots(scout_nodes, scout_deltas)
+
+            if resonance_window_min is None:
+                resonance_window_min = max(6.0 * refine_min_width, 32.0 * float(theta_root_tol))
+            if resonance_window_max is None:
+                resonance_window_max = 0.2 * (e1 - e0)
+
+            if theta_roots:
+                roots_by_energy = sorted(theta_roots, key=lambda item: float(item["energy"]))
+                # Roots in different l channels may be exactly coincident.
+                # Treating each as a separate neighbour would shrink both
+                # symmetric windows to zero.  Cluster only within the Brent
+                # location tolerance; genuinely distinct nearby roots retain
+                # separate centred panels.
+                cluster_tol = max(
+                    8.0 * float(theta_root_tol),
+                    32.0 * np.finfo(float).eps * max(abs(e0), abs(e1), 1.0),
+                )
+                member_clusters: list[list[dict]] = []
+                for item in roots_by_energy:
+                    if (
+                        member_clusters
+                        and abs(
+                            float(item["energy"])
+                            - float(member_clusters[-1][-1]["energy"])
+                        )
+                        <= cluster_tol
+                    ):
+                        member_clusters[-1].append(item)
+                    else:
+                        member_clusters.append([item])
+
+                theta_root_clusters = []
+                for cluster_id, members in enumerate(member_clusters):
+                    energies = np.asarray(
+                        [float(item["energy"]) for item in members],
+                        dtype=float,
+                    )
+                    center = float(np.mean(energies))
+                    channels = sorted(set(int(item["l"]) for item in members))
+                    width_est = max(
+                        max(float(item["width_est"]) for item in members),
+                        float(theta_root_tol),
+                    )
+                    cluster = {
+                        "cluster_id": int(cluster_id),
+                        "energy": center,
+                        "energy_min": float(np.min(energies)),
+                        "energy_max": float(np.max(energies)),
+                        "channels": channels,
+                        "root_count": int(len(members)),
+                        "width_est": float(width_est),
+                    }
+                    theta_root_clusters.append(cluster)
+                    for item in members:
+                        item["cluster_id"] = int(cluster_id)
+                        item["cluster_energy"] = center
+                        item["cluster_channels"] = channels
+
+                # Construct disjoint panels centred on each root cluster.  A
+                # centred first Simpson evaluation is essential: otherwise an
+                # ultra-narrow peak could again fall between all evaluations.
+                theta_windows: list[tuple[float, float]] = []
+                for i_root, cluster in enumerate(theta_root_clusters):
+                    center = float(cluster["energy"])
+                    width_est = float(cluster["width_est"])
+                    half = min(
+                        max(float(resonance_window_factor) * width_est, float(resonance_window_min)),
+                        float(resonance_window_max),
+                    )
+                    left_limit = e0
+                    right_limit = e1
+                    if i_root > 0:
+                        left_limit = 0.5 * (
+                            float(theta_root_clusters[i_root - 1]["energy"]) + center
+                        )
+                    if i_root + 1 < len(theta_root_clusters):
+                        right_limit = 0.5 * (
+                            center + float(theta_root_clusters[i_root + 1]["energy"])
+                        )
+                    # Symmetry is kept even next to an energy boundary or a
+                    # neighbouring root by shrinking, never shifting, a panel.
+                    half = min(half, center - left_limit, right_limit - center)
+                    if half <= 4.0 * np.finfo(float).eps * max(abs(center), 1.0):
+                        continue
+                    low = float(center - half)
+                    high = float(center + half)
+                    theta_windows.append((low, high))
+                    cluster["window_lo"] = low
+                    cluster["window_hi"] = high
+                    for item in roots_by_energy:
+                        if int(item.get("cluster_id", -1)) == int(cluster["cluster_id"]):
+                            item["window_lo"] = low
+                            item["window_hi"] = high
+
+                windows = theta_windows
+                if windows:
+                    # Keep base resolution in the gaps, but deliberately drop
+                    # base nodes inside a resonance panel so that the panel is
+                    # not split away from its known centre.
+                    cuts = [float(e0), float(e1)]
+                    for val in e_base:
+                        e_val = float(val)
+                        if not any(w0 < e_val < w1 for w0, w1 in windows):
+                            cuts.append(e_val)
+                    for w0, w1 in windows:
+                        cuts.extend([float(w0), float(w1)])
+                    cuts = sorted(set(cuts))
+                    coarse_segments: list[tuple[float, float]] = []
+                    for i_cut in range(len(cuts) - 1):
+                        sa = float(cuts[i_cut])
+                        sb = float(cuts[i_cut + 1])
+                        if sb <= sa or segment_in_window(sa, sb, windows):
+                            continue
+                        coarse_segments.append((sa, sb))
+
+                    endpoints: list[float] = []
+                    for sa, sb in coarse_segments + windows:
+                        endpoints.extend([sa, sb])
+                    # Prime the exact centres as well.  They are then reused by
+                    # the first adaptive Simpson evaluation of each window.
+                    endpoints.extend(
+                        float(cluster["energy"]) for cluster in theta_root_clusters
+                    )
+                    endpoints.extend(float(item["energy"]) for item in roots_by_energy)
+                    eval_energy_batch(endpoints)
+
+                    # Apply the same error-controlled Simpson rule both inside
+                    # and outside the carved panels.  The known resonance
+                    # centre is the midpoint of each window, so it cannot be
+                    # skipped; retaining adaptivity in the gaps prevents the
+                    # scout mode from degrading otherwise-smooth continuum
+                    # quadrature relative to the ordinary Simpson path.
+                    n_r_local = np.zeros_like(r, dtype=float)
+                    intervals = []
+                    for sa, sb in coarse_segments + windows:
+                        na, da = cache[sa]
+                        nb, db = cache[sb]
+                        intervals.append((sa, sb, na, nb, da, db, 0))
+                    if use_parallel:
+                        n_r_local += integrate_intervals_parallel(intervals)
+                    else:
+                        for sa, sb, na, nb, da, db, depth in intervals:
+                            n_r_local += integrate_interval(sa, sb, na, nb, da, db, depth)
+                    return n_r_local
+
+            # No root (or no usable centred window): retain the safe global
+            # Simpson fallback rather than returning a coarse integral.
+            use_theta_detector = False
 
         if use_bisection:
-            e_nodes = _build_base_nodes(e0, e1, int(n_e_base), e_base_grid)
+            e_nodes = _build_integration_nodes(e0, e1, int(n_e_base), e_base_grid)
             # Precompute delta on base nodes (batch for parallel).
             if use_parallel:
                 node_vals = eval_energy_batch(e_nodes.tolist())
@@ -3046,7 +4166,7 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
                 use_bisection = False
 
         if not use_bisection:
-            e_nodes = _build_base_nodes(e0, e1, int(n_e_base), e_base_grid)
+            e_nodes = _build_integration_nodes(e0, e1, int(n_e_base), e_base_grid)
             node_vals = eval_energy_batch(e_nodes.tolist()) if use_parallel else [eval_energy(float(e)) for e in e_nodes]
             n_nodes = [n for n, _ in node_vals]
             d_nodes = [d for _, d in node_vals]
@@ -3118,6 +4238,8 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
         "delta_mode": str(delta_mode),
         "adaptive_mode": adaptive_mode,
         "adaptive_parallel_mode": "batch",
+        "adaptive_parallel_mode_requested": str(parallel_mode_requested),
+        "theta_shard_mode_forced_batch": bool(theta_shard_mode_forced_batch),
         "adaptive_shards": int(adaptive_shards) if adaptive_shards is not None else (int(n_jobs) if use_parallel else 1),
         "adaptive_shard_policy": str(shard_policy),
         "n_windows": len(windows),
@@ -3127,6 +4249,40 @@ def continuum_density_scattering_adaptive(v_eff: np.ndarray,
         "bisection_intervals": bisection_intervals,
         "bisection_samples": bisection_samples,
         "bisection_max_depth": bisection_depth_max,
+        "theta_detector_enabled": adaptive_mode in ("phase-root", "theta-scout", "theta-local"),
+        "theta_fallback": bool(
+            not windows
+            and adaptive_mode in ("phase-root", "theta-scout", "theta-local")
+        ),
+        "theta_candidates": int(theta_candidates),
+        "theta_rejected": int(theta_rejected),
+        "theta_root_evals": int(theta_root_evals),
+        "theta_root_tol": float(theta_root_tol),
+        "theta_refine_min_width": float(refine_min_width),
+        "theta_refine_depth": int(refine_depth_limit),
+        "theta_roots": [dict(item) for item in theta_roots],
+        "theta_root_clusters": [dict(item) for item in theta_root_clusters],
+        "theta_scout_requested_depth": int(theta_scan_depth),
+        "theta_scout_completed_depth": int(theta_scout_completed_depth),
+        "theta_scout_base_node_count": int(theta_scout_base_node_count),
+        "theta_scout_node_count": int(theta_scout_node_count),
+        "theta_scout_extra_node_count": int(theta_scout_extra_node_count),
+        "theta_scout_max_extra_nodes": (
+            None
+            if theta_scout_max_extra_nodes is None
+            else int(theta_scout_max_extra_nodes)
+        ),
+        "theta_scout_budget_exhausted": bool(theta_scout_budget_exhausted),
+        "theta_scout_min_spacing": (
+            None if theta_scout_min_spacing is None else float(theta_scout_min_spacing)
+        ),
+        "theta_scout_max_spacing": (
+            None if theta_scout_max_spacing is None else float(theta_scout_max_spacing)
+        ),
+        "theta_scout_limitation": "finite_mesh_no_arbitrary_subgrid_guarantee",
+        "near_zero_log_grid": bool(near_zero_enabled),
+        "near_zero_log_anchor_count": int(len(near_zero_anchors)),
+        "near_zero_log_anchors": sorted(near_zero_anchors),
         "apply_occ": bool(apply_occ),
     }
     if bool(collect_perf):
@@ -3331,7 +4487,7 @@ class QuantumContinuumScattering(ContinuumModel):
             resonance_r_fractions = params.get("resonance_r_fractions", (0.25, 0.5, 0.75))
             resonance_floor = float(params.get("resonance_floor", 1e-8))
             adaptive_mode = str(params.get("adaptive_mode", "bisection"))
-            # Bisection defaults: favor Wilson-style total phase shifts and tighter windows.
+            # Bisection defaults: favor total phase shifts and tighter windows.
             if adaptive_mode == "bisection":
                 delta_mode_default = "sum"
                 delta_tol_default = np.pi
@@ -3357,6 +4513,15 @@ class QuantumContinuumScattering(ContinuumModel):
             resonance_max_windows = params.get("resonance_max_windows", None)
             if resonance_max_windows is not None:
                 resonance_max_windows = int(resonance_max_windows)
+            resonance_theta_root_tol = params.get("resonance_theta_root_tol", None)
+            if resonance_theta_root_tol is not None:
+                resonance_theta_root_tol = float(resonance_theta_root_tol)
+            resonance_theta_max_roots = params.get("resonance_theta_max_roots", None)
+            if resonance_theta_max_roots is not None:
+                resonance_theta_max_roots = int(resonance_theta_max_roots)
+            resonance_theta_refine_depth = params.get("resonance_theta_refine_depth", None)
+            if resonance_theta_refine_depth is not None:
+                resonance_theta_refine_depth = int(resonance_theta_refine_depth)
             # Adaptive integration (refine around resonances/phase jumps).
             n_r, _ = continuum_density_scattering_adaptive(
                 v_eff,
@@ -3388,6 +4553,12 @@ class QuantumContinuumScattering(ContinuumModel):
                 e_min_width=e_min_width,
                 n_e_base=n_e_base,
                 e_base_grid=e_base_grid,
+                near_zero_log_grid=bool(params.get("near_zero_log_grid", True)),
+                near_zero_log_points_per_decade=int(
+                    params.get("near_zero_log_points_per_decade", 4)
+                ),
+                near_zero_log_max_nodes=int(params.get("near_zero_log_max_nodes", 24)),
+                near_zero_log_max_energy=params.get("near_zero_log_max_energy", 1.0e-2),
                 resonance_tol=resonance_tol,
                 resonance_r_fractions=resonance_r_fractions,
                 resonance_floor=resonance_floor,
@@ -3399,6 +4570,17 @@ class QuantumContinuumScattering(ContinuumModel):
                 resonance_window_min=resonance_window_min,
                 resonance_window_max=resonance_window_max,
                 resonance_max_windows=resonance_max_windows,
+                resonance_theta_l_min=int(params.get("resonance_theta_l_min", 1)),
+                resonance_theta_probe_count=int(params.get("resonance_theta_probe_count", 1)),
+                resonance_theta_scan_depth=int(params.get("resonance_theta_scan_depth", 3)),
+                resonance_theta_scout_max_extra_nodes=params.get(
+                    "resonance_theta_scout_max_extra_nodes",
+                    128,
+                ),
+                resonance_theta_root_tol=resonance_theta_root_tol,
+                resonance_theta_sharpness_min=float(params.get("resonance_theta_sharpness_min", 2.0)),
+                resonance_theta_max_roots=resonance_theta_max_roots,
+                resonance_theta_refine_depth=resonance_theta_refine_depth,
                 energy_cache=energy_cache,
                 n_jobs=n_jobs,
                 adaptive_parallel_mode=adaptive_parallel_mode,
@@ -3450,6 +4632,20 @@ class QuantumContinuumScattering(ContinuumModel):
             n0 = float(params.get("tail_n0", ideal_unbound_density(mu, temperature)))
             mu_id = float(params.get("tail_mu_id", mu))
             fit_points = int(params.get("tail_fit_points", 16))
+            tail_fit_window_mode = str(
+                params.get("tail_fit_window_mode", "local")
+            ).strip().lower()
+            if tail_fit_window_mode == "auto" and tail_match_target == "cont":
+                tail_fit_window_mode = "local"
+            if tail_fit_window_mode not in ("auto", "physical", "local"):
+                raise ValueError(
+                    "tail_fit_window_mode must be 'auto', 'physical', or 'local'."
+                )
+            tail_r_fit_max = (
+                params.get("tail_r_fit_max", None)
+                if tail_fit_window_mode in ("auto", "physical")
+                else None
+            )
             blend_points = int(params.get("tail_blend_points", 0))
             tail_fallback_on_error = bool(params.get("tail_fallback_on_error", True))
             r_cut = float(tail_cut_anchor if tail_cut_anchor is not None else 0.7 * r[-1])
@@ -3474,6 +4670,8 @@ class QuantumContinuumScattering(ContinuumModel):
                     temperature,
                     r_cuts=r_cuts,
                     fit_points=fit_points,
+                    r_fit_max=tail_r_fit_max,
+                    fit_window_mode=tail_fit_window_mode,
                     blend_points=blend_points,
                 )
                 idx_scan, _ = select_tail_cut_converged(
@@ -3528,6 +4726,9 @@ class QuantumContinuumScattering(ContinuumModel):
                         temperature,
                         idx_cut,
                         fit_points=fit_points,
+                        r_fit_max=tail_r_fit_max,
+                        local_fit_width=params.get("tail_local_fit_width", None),
+                        fit_window_mode=tail_fit_window_mode,
                         blend_points=blend_points,
                     )
                 except Exception as exc:

@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.orig
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
@@ -7,3 +8,12 @@ __pycache__/
 build/
 dist/
 outputs/
+
+# Sphinx writes these trees from the hand-written sources on every build.
+# Keeping them out of version control makes local and CI builds reproducible.
+docs/build/
+docs/source/_autosummary/
+docs/source/gen_examples/
+docs/source/benchmarks/gen_benchmarks/
+docs/source/gen_modules/
+docs/source/sg_execution_times.rst

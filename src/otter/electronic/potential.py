@@ -20,13 +20,18 @@ External system (Starrett2014 Eq. 7):
 
 References
 ----------
-- C. E. Starrett & D. Saumon (2014), Eqs. (4) and (7).
+- :cite:`StarrettSaumon2014`, Eqs. (4) and (7), DOI
+  10.1016/j.hedp.2013.12.001.
+
+The spherical quadrature, origin handling, and XC finite-core regularization
+are Otter numerical implementation choices; they are not attributed to the
+reference paper.
 """
 from __future__ import annotations
 
 import numpy as np
 
-from otter.electronic.xc import lda_xc_potential
+from otter.electronic.xc import resolve_gga_core_radius, xc_potential
 
 
 def _cumtrapz(y: np.ndarray, x: np.ndarray) -> np.ndarray:
@@ -120,13 +125,73 @@ def _as_array_like(x: float | np.ndarray, ref: np.ndarray) -> np.ndarray:
     return arr
 
 
-def effective_potential_full(r: np.ndarray,
-                             n_full: np.ndarray,
-                             n0: float | np.ndarray,
-                             g_ii: np.ndarray,
-                             Z: float,
-                             xc_model: str = "dirac",
-                             kappa: float = 0.0) -> np.ndarray:
+def _ion_sphere_background_hartree(
+    r: np.ndarray,
+    *,
+    n0: float,
+    r_ws: float,
+) -> np.ndarray:
+    """Analytic Hartree potential of ``-n0 Theta(r-r_ws)`` in the box.
+
+    Sampling the ion-sphere discontinuity on a nonuniform radial grid creates
+    a grid-dependent background charge.  The analytic expression keeps the
+    full and external Thomas--Fermi maps neutral to the requested tolerance.
+    """
+    r_arr = np.asarray(r, dtype=float)
+    if r_arr.ndim != 1 or r_arr.size == 0:
+        raise ValueError("r must be a non-empty one-dimensional array.")
+    if np.any(r_arr <= 0.0) or np.any(np.diff(r_arr) <= 0.0):
+        raise ValueError("r must be positive and strictly increasing.")
+    r_box = float(r_arr[-1])
+    radius = float(np.clip(float(r_ws), 0.0, r_box))
+    density = -float(n0)
+    out = np.empty_like(r_arr)
+    inside = r_arr < radius
+    out[inside] = 2.0 * np.pi * density * (r_box**2 - radius**2)
+    outside = ~inside
+    r_out = r_arr[outside]
+    out[outside] = 4.0 * np.pi * density * (
+        (r_out**3 - radius**3) / (3.0 * r_out)
+        + 0.5 * (r_box**2 - r_out**2)
+    )
+    return out
+
+
+def _require_sharp_ion_sphere_profile(
+    r: np.ndarray,
+    g_ii: np.ndarray,
+    radius: float,
+) -> None:
+    """Fail closed if the analytic IS shortcut is paired with a non-IS g(r).
+
+    The shortcut integrates ``-n0 Theta(r-R_ws)`` analytically.  It is
+    therefore mathematically equivalent to the sampled source only when the
+    supplied profile is that same sharp step.  In particular it must never be
+    used for the self-consistent ``g_II`` in Starrett--Saumon (2014),
+    Sec. 2.4, because doing so would silently discard the feedback in Eqs.
+    (4) and (7).
+    """
+    expected = (np.asarray(r, dtype=float) >= float(radius)).astype(float)
+    if not np.array_equal(np.asarray(g_ii, dtype=float), expected):
+        raise ValueError(
+            "ion_sphere_radius analytic background requires the literal "
+            "sharp ion-sphere g_ii step; use ion_sphere_radius=None for a "
+            "tabulated QOZ/HNC background."
+        )
+
+
+def effective_potential_full(
+    r: np.ndarray,
+    n_full: np.ndarray,
+    n0: float | np.ndarray,
+    g_ii: np.ndarray,
+    Z: float,
+    xc_model: str = "dirac",
+    kappa: float = 0.0,
+    ion_sphere_radius: float | None = None,
+    gga_core_mode: str = "finite",
+    gga_core_zr: float = 0.05,
+) -> np.ndarray:
     """
     Effective potential for the full AA system (with nucleus).
 
@@ -143,9 +208,16 @@ def effective_potential_full(r: np.ndarray,
     Z : float
         Nuclear charge.
     xc_model : str
-        XC model name for LDA potential.
+        XC model name; GGA models use radial density gradients.
     kappa : float
         Poisson-Helmholtz screening parameter (Bohr^-1).
+    ion_sphere_radius : float or None
+        If supplied with scalar ``n0`` and ``kappa=0``, integrate the sharp
+        ion-sphere background analytically.
+    gga_core_mode : {"finite", "strict"}
+        Nuclear-core treatment for GGA models.
+    gga_core_zr : float
+        Dimensionless finite-core radius ``Z*r_c``.
 
     Returns
     -------
@@ -162,23 +234,62 @@ def effective_potential_full(r: np.ndarray,
         raise ValueError("n_full and g_ii must match r shape.")
 
     n0_arr = _as_array_like(n0, r)
-    rho = n_full - n0_arr * g_ii
-
-    if kappa > 0.0:
+    use_analytic_background = (
+        ion_sphere_radius is not None and np.asarray(n0).ndim == 0 and kappa <= 0.0
+    )
+    if use_analytic_background:
+        _require_sharp_ion_sphere_profile(
+            r,
+            g_ii,
+            float(ion_sphere_radius),
+        )
+        v_h = spherical_hartree_potential(r, n_full)
+        v_h = v_h + _ion_sphere_background_hartree(
+            r,
+            n0=float(np.asarray(n0)),
+            r_ws=float(ion_sphere_radius),
+        )
+    elif kappa > 0.0:
+        rho = n_full - n0_arr * g_ii
         v_h = spherical_hartree_potential_screened(r, rho, kappa)
     else:
+        rho = n_full - n0_arr * g_ii
         v_h = spherical_hartree_potential(r, rho)
-    v_xc = lda_xc_potential(n_full, model=xc_model) - lda_xc_potential(n0_arr, model=xc_model)
+    gga_core_radius = resolve_gga_core_radius(
+        xc_model,
+        nuclear_charge=float(Z),
+        mode=gga_core_mode,
+        core_zr=gga_core_zr,
+        r=r,
+    )
+    v_xc = xc_potential(
+        n_full,
+        model=xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    ) - xc_potential(
+        n0_arr,
+        model=xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    )
 
     return -Z / r + v_h + v_xc
 
 
-def effective_potential_external(r: np.ndarray,
-                                 n_ext: np.ndarray,
-                                 n0: float | np.ndarray,
-                                 g_ii: np.ndarray,
-                                 xc_model: str = "dirac",
-                                 kappa: float = 0.0) -> np.ndarray:
+def effective_potential_external(
+    r: np.ndarray,
+    n_ext: np.ndarray,
+    n0: float | np.ndarray,
+    g_ii: np.ndarray,
+    xc_model: str = "dirac",
+    kappa: float = 0.0,
+    ion_sphere_radius: float | None = None,
+    *,
+    nuclear_charge: float | None = None,
+    gga_core_mode: str = "strict",
+    gga_core_zr: float = 0.05,
+) -> np.ndarray:
     """
     Effective potential for the external AA system (no nucleus).
 
@@ -193,9 +304,18 @@ def effective_potential_external(r: np.ndarray,
     g_ii : ndarray
         Ion-ion pair distribution function.
     xc_model : str
-        XC model name for LDA potential.
+        XC model name; GGA models use radial density gradients.
     kappa : float
         Poisson-Helmholtz screening parameter (Bohr^-1).
+    ion_sphere_radius : float or None
+        Optional analytic sharp-background radius; see
+        :func:`effective_potential_full`.
+    nuclear_charge : float or None
+        Species nuclear charge used to resolve a finite GGA core.
+    gga_core_mode : {"finite", "strict"}
+        Nuclear-core treatment for GGA models.
+    gga_core_zr : float
+        Dimensionless finite-core radius ``Z*r_c``.
 
     Returns
     -------
@@ -212,12 +332,49 @@ def effective_potential_external(r: np.ndarray,
         raise ValueError("n_ext and g_ii must match r shape.")
 
     n0_arr = _as_array_like(n0, r)
-    rho = n_ext - n0_arr * g_ii
-
-    if kappa > 0.0:
+    use_analytic_background = (
+        ion_sphere_radius is not None and np.asarray(n0).ndim == 0 and kappa <= 0.0
+    )
+    if use_analytic_background:
+        _require_sharp_ion_sphere_profile(
+            r,
+            g_ii,
+            float(ion_sphere_radius),
+        )
+        v_h = spherical_hartree_potential(r, n_ext)
+        v_h = v_h + _ion_sphere_background_hartree(
+            r,
+            n0=float(np.asarray(n0)),
+            r_ws=float(ion_sphere_radius),
+        )
+    elif kappa > 0.0:
+        rho = n_ext - n0_arr * g_ii
         v_h = spherical_hartree_potential_screened(r, rho, kappa)
     else:
+        rho = n_ext - n0_arr * g_ii
         v_h = spherical_hartree_potential(r, rho)
-    v_xc = lda_xc_potential(n_ext, model=xc_model) - lda_xc_potential(n0_arr, model=xc_model)
+    mode_key = str(gga_core_mode).strip().lower()
+    if mode_key == "finite" and nuclear_charge is None:
+        raise ValueError(
+            "nuclear_charge is required for finite-core GGA external potentials."
+        )
+    gga_core_radius = resolve_gga_core_radius(
+        xc_model,
+        nuclear_charge=(1.0 if nuclear_charge is None else float(nuclear_charge)),
+        mode=mode_key,
+        core_zr=gga_core_zr,
+        r=r,
+    )
+    v_xc = xc_potential(
+        n_ext,
+        model=xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    ) - xc_potential(
+        n0_arr,
+        model=xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    )
 
     return v_h + v_xc

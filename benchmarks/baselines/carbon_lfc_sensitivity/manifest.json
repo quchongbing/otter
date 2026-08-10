@@ -1,0 +1,118 @@
+{
+  "schema_version": "otter_benchmark_manifest_v2",
+  "benchmark_id": "carbon_lfc_sensitivity",
+  "status": "accepted",
+  "metrics_file": "metrics.csv",
+  "metrics_sha256": "980d54d287475507cdd11cfc9481730805e909244007c7028b05a70db54896fb",
+  "title": "Carbon finite-temperature LFC sensitivity at 5 g cm^-3",
+  "producer": {
+    "project": "Otter",
+    "git_commit": "abf0ddd583d34a51c72623fc472cbbd652c5d8db",
+    "script_relative_path": "benchmarks/runners/regenerate_carbon_lfc_sensitivity.py",
+    "script_sha256": "374ce9a8070ef55eece0a2accc0fe37f0fcfa2ac54722f646b946cd98ac77bf1",
+    "script_sha256_at_generation": "374ce9a8070ef55eece0a2accc0fe37f0fcfa2ac54722f646b946cd98ac77bf1",
+    "script_sha256_current": "eea6904d6b148c57a73e3cbf88a3d3cf93dbeffbcf5b30396cd51213fa4c1962",
+    "worktree_clean_at_generation": true,
+    "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "note": "git_commit identifies HEAD only. When worktree_clean_at_generation is false, script_sha256 and the status hash disclose that uncommitted source participated."
+  },
+  "data_rights": {
+    "origin_type": "project_generated_numerical_output",
+    "third_party_reference_data_included": false,
+    "method_citations_only": true
+  },
+  "method_references": [
+    {
+      "citation_key": "StarrettSaumon2014",
+      "doi": "10.1016/j.hedp.2013.12.001",
+      "scope": "pseudoatom screening and effective ion interaction"
+    },
+    {
+      "citation_key": "Hubbard1958",
+      "doi": "10.1098/rspa.1958.0003",
+      "scope": "Hubbard static local-field correction"
+    },
+    {
+      "citation_key": "UtsumiIchimaru1982",
+      "doi": "10.1103/PhysRevA.26.603",
+      "scope": "Utsumi--Ichimaru static local-field correction"
+    },
+    {
+      "citation_key": "Chabrier1990",
+      "doi": "10.1051/jphys:0199000510150160700",
+      "scope": "finite-temperature jellium local-field correction"
+    },
+    {
+      "citation_key": "GeldartVosko1966",
+      "doi": "10.1139/p66-174",
+      "scope": "low-temperature branch used by the Gregori interpolation"
+    },
+    {
+      "citation_key": "GregoriEtAl2007",
+      "doi": "10.1016/j.hedp.2007.02.006",
+      "scope": "finite-temperature local-field interpolation"
+    },
+    {
+      "citation_key": "LutgertEtAl2026",
+      "doi": "10.1016/j.cpc.2026.110173",
+      "scope": "software provenance for the attributed Gregori/Geldart--Vosko implementation adapted from JaXRTS"
+    }
+  ],
+  "units": {
+    "radius": "Bohr",
+    "wavenumber": "Bohr^-1",
+    "electron_density": "Bohr^-3",
+    "electron_response": "Bohr^-3 Hartree^-1",
+    "screening_cloud_k": "electron number",
+    "effective_pair_potential_r": "Hartree",
+    "effective_pair_potential_k": "Hartree Bohr^3",
+    "gii": "dimensionless",
+    "sii": "dimensionless"
+  },
+  "configuration": {
+    "rho_g_cc": 5.0,
+    "temperatures_ev": [
+      2.0,
+      100.0
+    ],
+    "models": [
+      "none",
+      "hubbard",
+      "utsumiichimaru",
+      "chabrier1990",
+      "gregori2007"
+    ],
+    "reference_model": "chabrier1990",
+    "structure_model": "IS",
+    "aa_n_points": 4096,
+    "bound_occ_mode": "fd",
+    "bound_rmax_mult": null,
+    "bound_zero_tail_refine": true,
+    "bound_zero_tail_matching_mode": "direct_physical_boundary",
+    "bound_zero_tail_max_binding_ha": 0.01,
+    "bound_zero_tail_scan_points": 48,
+    "bound_zero_tail_edge_rel_tol": 0.1,
+    "b3_tail_model": "full",
+    "qoz_n_points_before_padding": 8192,
+    "chi0_model": "lindhard_fd",
+    "hnc_tolerance": 1e-05,
+    "hnc_transform_closure_tolerance": 0.0001,
+    "strict_electronic_convergence_required": true,
+    "allow_unconverged_aa": false,
+    "resolution_rationale": "4096 radial points follow Starrett--Saumon (2014), Appendix B, after a 1024/2048/4096 threshold audit at 100 eV. A near-threshold state is checked by matching to a zero-potential exterior at the common outer SCF boundary; this numerical refinement is motivated by the threshold-state discussion of Starrett et al. (2019), but is not asserted to reproduce their ion-sphere boundary implementation. No separate bound-only radial extension is used."
+  },
+  "states": [
+    {
+      "rho_g_cc": 5.0,
+      "temperature_ev": 2.0,
+      "data_file": "C_rho5gcc_T2eV_lfc.npz",
+      "data_sha256": "c6f63ce0a25ec7fb7f73960cd6ff053b487a35001c27ce154faeff0149bbef4b"
+    },
+    {
+      "rho_g_cc": 5.0,
+      "temperature_ev": 100.0,
+      "data_file": "C_rho5gcc_T100eV_lfc.npz",
+      "data_sha256": "c10b2a1a3fd3874b55fe01c6b73bfbb4660305201281ea9912f484169f292a31"
+    }
+  ]
+}

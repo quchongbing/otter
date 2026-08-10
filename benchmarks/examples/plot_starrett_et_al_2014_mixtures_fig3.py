@@ -1,0 +1,564 @@
+"""
+Starrett et al. CH1.36 mixture pair distributions
+==================================================
+
+This is a complete, directly executable Otter benchmark for the nine
+thermodynamic states in Figure 3 of :cite:t:`StarrettEtAl2014`.  Edit only the
+input block below.  ``USE_PRECOMPUTED_DATA = True`` verifies and loads the
+accepted numerical arrays.  With ``False``, this same file directly creates
+:class:`otter.PlasmaWorkflowConfig`, calls
+:func:`otter.solve_plasma_workflow` for all nine C--H states, saves new NPZ
+files below
+``benchmarks/outputs/starrett_et_al_2014_mixtures_fig3/gallery_recomputed``,
+and plots those results.  It does not import another benchmark runner or
+producer.
+
+The open markers are independent digitizations of the solid IS-QM curves in
+the published figure.  In the default mode the continuous curves are
+validated private-precursor arrays retained as Otter's migration target; this
+provenance distinction is recorded in the accepted manifest.  In live mode
+the continuous curves are newly computed Otter results.
+
+The orbital average atom, Appendix-A continuum, Appendix-B density tail,
+pseudoatom/QOZ construction, and IS approximation follow
+:cite:t:`StarrettSaumon2014`; the mixture construction follows
+:cite:t:`StarrettEtAl2014`; and the finite-temperature jellium LFC follows
+:cite:t:`Chabrier1990`.  See :doc:`the provenance, numerical metrics, model
+configuration, and redistribution boundary
+</benchmarks/starrett_et_al_2014_mixtures_fig3>` for interpretation.
+The comparison figure is exported as matching PNG and vector PDF files under
+``benchmarks/outputs/starrett_et_al_2014_mixtures_fig3/figures``.
+"""
+
+from __future__ import annotations
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import ExitStack
+import hashlib
+import json
+import os
+from pathlib import Path
+import time
+from typing import Any
+
+# Each average-atom continuum calculation already uses processes.  Avoid
+# hidden BLAS/OpenMP oversubscription when the outer state pool is enabled.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.lines import Line2D
+
+from otter import PlasmaWorkflowConfig, solve_plasma_workflow
+from otter.plotting import PAIR_COLORS, grid_figsize, save_figure, style_context
+
+
+# =============================================================================
+# User input
+# =============================================================================
+USE_PRECOMPUTED_DATA = True
+
+DENSITIES_G_CC = (2.94, 5.0, 15.0)
+TEMPERATURES_KK = (20, 50, 100)
+STOICHIOMETRIC_COUNTS = (1.0, 1.36)
+
+# Three thermodynamic-state workers x six continuum workers uses at most about
+# 18 explicit worker processes on a 24-core workstation.
+MAX_STATE_WORKERS = 3
+CONTINUUM_WORKERS_PER_STATE = 6
+SPECIES_PARALLEL_JOBS = 1
+
+AA_N_POINTS = 4096
+QOZ_N_POINTS = 4096
+MU_E_TOL_HA = 1.0e-4
+ROOT_TOL = 1.0e-4
+ROOT_MAXFEV = 32
+ROOT_BRENT_MAXITER = 24
+HNC_TOL = 1.0e-5
+HNC_CLOSURE_TOL = 1.0e-4
+HNC_MAX_ITER = 1000
+R_RETAIN_MAX_BOHR = 20.0
+# =============================================================================
+
+
+EV_PER_K = 8.617333262145e-5
+PAIR_ORDER = ("CC", "CH", "HH")
+PAIR_COLUMNS = {"CC": (0, 1), "CH": (4, 5), "HH": (2, 3)}
+
+
+def repository_root() -> Path:
+    """Locate the Otter checkout when run directly or by Sphinx-Gallery."""
+    candidates = [Path.cwd().resolve(), *Path.cwd().resolve().parents]
+    source_file = globals().get("__file__")
+    if source_file is not None:
+        source = Path(str(source_file)).resolve()
+        candidates.extend([source.parent, *source.parents])
+    for candidate in candidates:
+        if (
+            candidate
+            / "benchmarks"
+            / "baselines"
+            / "starrett_et_al_2014_mixtures_fig3"
+            / "manifest.json"
+        ).is_file():
+            return candidate
+    raise FileNotFoundError("Cannot locate the Otter checkout.")
+
+
+ROOT = repository_root()
+PRECOMPUTED_DIR = (
+    ROOT
+    / "benchmarks"
+    / "baselines"
+    / "starrett_et_al_2014_mixtures_fig3"
+)
+OUTPUT_DIR = (
+    ROOT
+    / "benchmarks"
+    / "outputs"
+    / "starrett_et_al_2014_mixtures_fig3"
+    / "gallery_recomputed"
+)
+FIGURE_DIR = (
+    ROOT
+    / "benchmarks"
+    / "outputs"
+    / "starrett_et_al_2014_mixtures_fig3"
+    / "figures"
+)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def accepted_manifest() -> dict[str, Any]:
+    manifest = json.loads(
+        (PRECOMPUTED_DIR / "manifest.json").read_text(encoding="utf-8")
+    )
+    if manifest.get("benchmark_id") != (
+        "starrett_et_al_2014_mixtures_fig3_ch1p36"
+    ):
+        raise ValueError("Unexpected Starrett Figure 3 manifest.")
+    if len(manifest.get("states", ())) != 9:
+        raise ValueError("The Figure 3 manifest must contain nine states.")
+    return manifest
+
+
+def state_key(record: dict[str, Any]) -> tuple[float, int]:
+    return float(record["rho_g_cc"]), int(record["temperature_kk"])
+
+
+def load_result(path: Path) -> dict[str, np.ndarray]:
+    """Load one pickle-free accepted or newly computed result."""
+    with np.load(path, allow_pickle=False) as archive:
+        result = {key: np.asarray(archive[key]) for key in archive.files}
+    if any(value.dtype.hasobject for value in result.values()):
+        raise TypeError(f"Object arrays are forbidden in {path}.")
+    schema = str(result["schema_version"].item())
+    if schema not in {
+        "otter_starrett_mixtures_fig3_baseline_v1",
+        "otter_gallery_starrett_fig3_v1",
+    }:
+        raise ValueError(f"Unsupported numerical-result schema in {path}.")
+    if tuple(str(value) for value in result["pair_labels"]) != PAIR_ORDER:
+        raise ValueError(f"Unexpected pair order in {path}.")
+    return result
+
+
+def load_precomputed_results(
+    manifest: dict[str, Any],
+) -> dict[tuple[float, int], dict[str, np.ndarray]]:
+    """Verify every accepted result and digitization checksum."""
+    loaded: dict[tuple[float, int], dict[str, np.ndarray]] = {}
+    for record in manifest["states"]:
+        result_path = PRECOMPUTED_DIR / str(record["baseline_file"])
+        reference_path = (
+            PRECOMPUTED_DIR / str(record["reference_file"])
+        ).resolve()
+        if sha256_file(result_path) != str(record["baseline_sha256"]):
+            raise RuntimeError(f"Checksum mismatch for {result_path}.")
+        if sha256_file(reference_path) != str(record["reference_sha256"]):
+            raise RuntimeError(f"Checksum mismatch for {reference_path}.")
+        loaded[state_key(record)] = load_result(result_path)
+    return loaded
+
+
+def aa_overrides() -> dict[str, Any]:
+    """Return the documented IS-QM Appendix-B electronic controls."""
+    return {
+        "n_points": int(AA_N_POINTS),
+        "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
+        "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
+        "bound_occ_mode": "fd",
+        # The ordinary full-AA radial domain is also the bound-state domain.
+        # No experimental far-away bound-only zero box is enabled.
+        "bound_rmax_mult": None,
+        "bound_zero_tail_refine": False,
+        "b3_tail_stage1_mode": "in_scf",
+        "b3_tail_stage2_mode": "in_scf",
+        "ext_b3_tail_mode": "in_scf",
+        "b3_tail_target": "full",
+        "b3_tail_model": "full",
+        "b3_tail_fit_window_mode": "local",
+        "b3_tail_local_fit_width_mult": 0.064,
+        "b3_r_cut_mult": 3.0,
+        "b3_r_fit_max_mult": 4.0,
+        "b3_source_charge_constraint": False,
+        "full_b3_use_source_closure": False,
+        "ext_b3_use_source_closure": False,
+        "ph_kappa": 0.0,
+        "ph_kappa_iters": 0,
+    }
+
+
+def workflow_config(
+    rho_g_cc: float,
+    temperature_kk: int,
+) -> PlasmaWorkflowConfig:
+    """Build one strict public Otter C--H mixture calculation."""
+    temperature_ev = 1000.0 * float(temperature_kk) * EV_PER_K
+    return PlasmaWorkflowConfig(
+        elements=["C", "H"],
+        counts=list(STOICHIOMETRIC_COUNTS),
+        temperature_ev=temperature_ev,
+        ion_temperature_ev=temperature_ev,
+        rho_g_cc=float(rho_g_cc),
+        electronic_model="qm",
+        run_mode="full+ext",
+        aa_overrides=aa_overrides(),
+        mu_e_tol=float(MU_E_TOL_HA),
+        root_tol=float(ROOT_TOL),
+        root_maxfev=int(ROOT_MAXFEV),
+        root_brent_maxiter=int(ROOT_BRENT_MAXITER),
+        root_threshold_b3_surrogate_mode="a_only_when_full_unresolved",
+        allow_unconverged_root=False,
+        allow_unconverged_aa=False,
+        species_parallel_jobs=int(SPECIES_PARALLEL_JOBS),
+        species_parallel_backend="thread",
+        qoz_linear_n_points=int(QOZ_N_POINTS),
+        qoz_pad_factor=2.0,
+        qoz_zbar_mode="pseudoatom_partition",
+        qoz_renormalize_nscr_to_zbar=True,
+        qoz_response_chi0_model="lindhard_fd",
+        qoz_response_lfc_model="chabrier1990",
+        qoz_high_k_taper_start_frac=0.9,
+        hnc_tol=float(HNC_TOL),
+        hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
+        hnc_max_iter=int(HNC_MAX_ITER),
+        hnc_require_converged=True,
+        hnc_enforce_nodal_tail_zero=False,
+        hnc_s_projection_mode="none",
+        show_progress=False,
+        show_mu_progress=False,
+        verbose=False,
+        save_data=False,
+    )
+
+
+def strict_mixture_check(
+    workflow: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reject unconverged common-mu, AA, external-AA, or HNC output."""
+    if str(workflow["electronic"]["kind"]) != "mixture":
+        raise RuntimeError("The Figure 3 benchmark requires a mixture result.")
+    electronic = dict(workflow["electronic"]["result"])
+    meta = dict(electronic.get("meta", {}))
+    if not bool(meta.get("root_success", False)):
+        raise RuntimeError("The common-mu root did not converge.")
+    if float(meta.get("mu_residual_max_ha", np.inf)) > MU_E_TOL_HA:
+        raise RuntimeError("The common-mu residual exceeds tolerance.")
+    if not bool(meta.get("final_mu_root_success", False)):
+        raise RuntimeError("The full+external rerun lost common-mu closure.")
+    if float(meta.get("final_mu_residual_max_ha", np.inf)) > MU_E_TOL_HA:
+        raise RuntimeError("The final common-mu residual exceeds tolerance.")
+
+    species = [dict(entry) for entry in electronic["species"]]
+    if tuple(str(entry["element"]) for entry in species) != ("C", "H"):
+        raise RuntimeError("Unexpected species order in the mixture result.")
+    for entry in species:
+        symbol = str(entry["element"])
+        result = dict(entry["result"])
+        if result.get("stage2_converged") is not True:
+            raise RuntimeError(f"{symbol}: full AA stage 2 did not converge.")
+        if str(result.get("threshold_state_status", "")).lower() == "unresolved":
+            raise RuntimeError(f"{symbol}: unresolved threshold state.")
+        if dict(result.get("ext_status", {})).get("converged") is not True:
+            raise RuntimeError(f"{symbol}: external AA did not converge.")
+
+    ion = dict(workflow["ion"])
+    if ion.get("hnc_converged") is not True:
+        raise RuntimeError("The mixture HNC did not reach a physical root.")
+    if float(ion["hnc_output_residual"]) > HNC_TOL:
+        raise RuntimeError("The mixture HNC residual exceeds tolerance.")
+    if float(ion["closure_transform_max_abs"]) > HNC_CLOSURE_TOL:
+        raise RuntimeError("The mixture g/S transform-closure audit failed.")
+    return electronic, ion
+
+
+def solve_state(
+    rho_g_cc: float,
+    temperature_kk: int,
+) -> tuple[tuple[float, int], dict[str, np.ndarray]]:
+    """Run one complete AA -> pseudoatom -> mixture QOZ/HNC state."""
+    started = time.perf_counter()
+    workflow = solve_plasma_workflow(
+        workflow_config(rho_g_cc, temperature_kk)
+    )
+    elapsed_s = time.perf_counter() - started
+    electronic, ion = strict_mixture_check(workflow)
+    r = np.asarray(ion["r"], dtype=float)
+    gij = np.asarray(ion["gij_r"], dtype=float)
+    if gij.ndim != 3 or gij.shape[:2] != (2, 2):
+        raise ValueError(f"Unexpected gij array shape: {gij.shape}.")
+    mask = r <= R_RETAIN_MAX_BOHR
+    species = [dict(entry) for entry in electronic["species"]]
+    payload = {
+        "schema_version": np.asarray("otter_gallery_starrett_fig3_v1"),
+        "rho_g_cc": np.asarray(float(rho_g_cc)),
+        "temperature_kk": np.asarray(int(temperature_kk)),
+        "temperature_ev": np.asarray(
+            1000.0 * float(temperature_kk) * EV_PER_K
+        ),
+        "species_symbols": np.asarray(("C", "H")),
+        "species_counts": np.asarray(STOICHIOMETRIC_COUNTS),
+        "pair_labels": np.asarray(PAIR_ORDER),
+        "r_bohr": r[mask],
+        "g_ab": np.asarray(
+            (gij[0, 0, mask], gij[0, 1, mask], gij[1, 1, mask])
+        ),
+        "zbar_partition": np.asarray(ion["zbar_partition"], dtype=float),
+        "mu_ha": np.asarray(
+            [float(dict(entry["result"])["mu"]) for entry in species]
+        ),
+        "root_residual_ha": np.asarray(
+            float(dict(electronic["meta"])["final_mu_residual_max_ha"])
+        ),
+        "hnc_output_residual": np.asarray(
+            float(ion["hnc_output_residual"])
+        ),
+        "hnc_closure_mismatch": np.asarray(
+            float(ion["closure_transform_max_abs"])
+        ),
+        "producer_elapsed_s": np.asarray(elapsed_s),
+    }
+    return (float(rho_g_cc), int(temperature_kk)), payload
+
+
+def solve_all_states() -> dict[tuple[float, int], dict[str, np.ndarray]]:
+    """Calculate all nine independent states with a bounded outer pool."""
+    jobs = tuple(
+        (float(rho), int(temperature))
+        for rho in DENSITIES_G_CC
+        for temperature in TEMPERATURES_KK
+    )
+    loaded: dict[tuple[float, int], dict[str, np.ndarray]] = {}
+    with ProcessPoolExecutor(max_workers=MAX_STATE_WORKERS) as pool:
+        futures = {
+            pool.submit(solve_state, rho, temperature): (rho, temperature)
+            for rho, temperature in jobs
+        }
+        for future in as_completed(futures):
+            key, payload = future.result()
+            loaded[key] = payload
+            print(
+                f"[computed] CH1.36, rho={key[0]:g} g/cc, "
+                f"T={key[1]} kK"
+            )
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for (rho, temperature), payload in loaded.items():
+        rho_token = f"{rho:.2f}".replace(".", "p")
+        path = OUTPUT_DIR / (
+            f"CH1p36_rho{rho_token}gcc_T{temperature}kK_otter.npz"
+        )
+        np.savez_compressed(path, **payload)
+        print(f"[saved] {path}")
+    return loaded
+
+
+def load_reference(
+    path: Path,
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Read the two-header, six-column Figure 3 digitization."""
+    data = np.atleast_2d(
+        np.asarray(np.genfromtxt(path, delimiter=",", skip_header=2), dtype=float)
+    )
+    if data.shape[1] != 6:
+        raise ValueError(f"Expected six columns in {path}, got {data.shape}.")
+    curves: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for pair in PAIR_ORDER:
+        r_column, g_column = PAIR_COLUMNS[pair]
+        r = data[:, r_column]
+        g = data[:, g_column]
+        mask = np.isfinite(r) & np.isfinite(g) & (r >= 0.0)
+        r = r[mask]
+        g = g[mask]
+        order = np.argsort(r)
+        r = r[order]
+        g = g[order]
+        unique_r = np.unique(r)
+        curves[pair] = (
+            unique_r,
+            np.asarray([np.mean(g[r == value]) for value in unique_r]),
+        )
+    return curves
+
+
+manifest = accepted_manifest()
+results = (
+    load_precomputed_results(manifest)
+    if USE_PRECOMPUTED_DATA
+    else solve_all_states()
+)
+references = {
+    state_key(record): load_reference(
+        (PRECOMPUTED_DIR / str(record["reference_file"])).resolve()
+    )
+    for record in manifest["states"]
+}
+model_legend_label = "Otter"
+
+print(
+    "Using "
+    + (
+        "checksummed accepted arrays."
+        if USE_PRECOMPUTED_DATA
+        else "new results calculated directly by this gallery script."
+    )
+)
+print(
+    f"{'rho':>6s} {'T[kK]':>6s} {'pair':>4s} "
+    f"{'RMSE':>10s} {'MAE':>10s} {'max':>10s}"
+)
+for key in sorted(results):
+    result = results[key]
+    r_model = np.asarray(result["r_bohr"], dtype=float)
+    g_ab = np.asarray(result["g_ab"], dtype=float)
+    for pair_index, pair in enumerate(PAIR_ORDER):
+        r_ref, g_ref = references[key][pair]
+        mask = (
+            (r_ref >= r_model[0])
+            & (r_ref <= min(6.0, float(r_model[-1])))
+        )
+        delta = np.interp(r_ref[mask], r_model, g_ab[pair_index]) - g_ref[mask]
+        print(
+            f"{key[0]:6.2f} {key[1]:6d} {pair:>4s} "
+            f"{np.sqrt(np.mean(delta**2)):10.4e} "
+            f"{np.mean(np.abs(delta)):10.4e} "
+            f"{np.max(np.abs(delta)):10.4e}"
+        )
+
+
+# %%
+# Figure 3 overlay
+# ----------------
+#
+# Each open marker is digitized from the published solid IS-QM curve.  Each
+# continuous line is the selected numerical result: either the checksum-
+# verified migration target or a new calculation performed above.
+
+plot_style = ExitStack()
+plot_style.enter_context(style_context("thesis", palette="bing"))
+fig, axes = plt.subplots(
+    3,
+    3,
+    figsize=grid_figsize(3, 3, cell_width=3.8, cell_height=2.75),
+    sharex=True,
+    sharey=True,
+)
+for row, density in enumerate(DENSITIES_G_CC):
+    for column, temperature in enumerate(TEMPERATURES_KK):
+        axis = axes[row, column]
+        key = (float(density), int(temperature))
+        result = results[key]
+        r_model = np.asarray(result["r_bohr"], dtype=float)
+        g_model = np.asarray(result["g_ab"], dtype=float)
+        for pair_index, pair in enumerate(PAIR_ORDER):
+            r_ref, g_ref = references[key][pair]
+            axis.plot(
+                r_ref,
+                g_ref,
+                marker="o",
+                markersize=6.0,
+                markerfacecolor="none",
+                markeredgewidth=1.0,
+                color=PAIR_COLORS[pair],
+                linestyle="none",
+                alpha=0.75,
+            )
+            axis.plot(
+                r_model,
+                g_model[pair_index],
+                color=PAIR_COLORS[pair],
+                lw=1.4,
+            )
+        axis.set(xlim=(-0.5, 6.0), ylim=(-0.05, 2.0))
+        if row == 0:
+            axis.set_title(f"{temperature} kK")
+        if column == 0:
+            axis.set_ylabel(
+                rf"$\rho={density:g}$ g cm$^{{-3}}$"
+                + "\n"
+                + r"$g_{ab}(r)$"
+            )
+        if row == 2:
+            axis.set_xlabel(r"$r$ [$a_{\rm B}$]")
+
+handles = [
+    *(
+        Line2D([], [], color=PAIR_COLORS[pair], lw=2.0, label=pair)
+        for pair in PAIR_ORDER
+    ),
+    Line2D(
+        [],
+        [],
+        color="0.35",
+        marker="o",
+        markersize=7.5,
+        markeredgewidth=1.2,
+        markerfacecolor="none",
+        linestyle="none",
+        label="Starrett Fig. 3 digitized",
+    ),
+    Line2D([], [], color="0.35", lw=2.0, label=model_legend_label),
+]
+fig.legend(
+    handles=handles,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.945),
+    ncol=5,
+    frameon=False,
+)
+fig.suptitle(r"CH$_{1.36}$: Starrett et al. (2014), Figure 3", y=0.985)
+fig.text(
+    0.5,
+    0.006,
+    "Reference data: Starrett and Saumon (2014), "
+    "doi:10.1016/j.hedp.2013.12.001.",
+    ha="center",
+    va="bottom",
+    fontsize=7.5,
+)
+fig.tight_layout(
+    rect=(0.0, 0.025, 1.0, 0.90),
+    pad=0.45,
+    w_pad=0.25,
+    h_pad=0.25,
+)
+
+save_figure(
+    fig,
+    FIGURE_DIR / "starrett_et_al_2014_mixtures_fig3",
+    close=False,
+)
+plot_style.close()
+
+if "agg" not in plt.get_backend().lower():
+    plt.show()

@@ -1,12 +1,18 @@
 """
 otter/electronic/full_external.py
 
-User-facing runner for the validated electronic-structure workflow:
-    full SCF (mu-neutral) -> external SCF (fixed mu, fixed n0)
+User-facing runner for the electronic-structure workflow:
 
-The implementation follows the same algorithmic path as
-`tests/test_carbon_external_scf.py`, but exposes a reusable API so users can
-run with minimal inputs (Z/symbol, Te, rho) and optional advanced controls.
+    full SCF (ion-sphere neutral) -> external SCF (fixed mu, fixed n0)
+
+The full/external construction, pseudoatom density, Appendix-A continuum,
+and Appendix-B far-field continuation follow C. E. Starrett and D. Saumon,
+:cite:`StarrettSaumon2014`, High Energy Density Physics 10, 35--42 (2014),
+DOI 10.1016/j.hedp.2013.12.001.  Root bracketing, warm starts, charge-closure
+guards, threshold-state reliability tests, and fail-closed handoff rules are
+Otter numerical methods; they not be attributed to that paper. The
+pressure-ionization M(e) partition and cutoff are based on
+:cite:`StarrettSaumon2013`.
 """
 from __future__ import annotations
 
@@ -20,28 +26,45 @@ import numpy as np
 
 from otter.electronic.ks_dft import (
     KSDTFConfig,
+    _apply_charge_constrained_b3_tail,
     _apply_external_energy_floor,
     _continuum_prefix_length,
+    _electron_count,
     _enforce_source_charge_closure,
     _rebuild_continuum_on_full_grid,
     _resolve_iteration_continuum_l_max,
+    _source_electron_charge_target,
     _split_continuum_params_for_full_ext,
     _ion_level_weight,
     solve_ks_dft_is,
 )
-import otter.electronic.continuum.scattering as qmod
+from otter.electronic.continuum import scattering as qmod
 from otter.electronic.continuum.ideal import ideal_unbound_density
 from otter.electronic.continuum.tail import apply_tail_match, tail_parameters
 from otter.electronic.continuum.scattering import fermi_dirac
 from otter.numerics.grids import create_sqrt_grid
 from otter.numerics.constants import EV_TO_HA
 from otter.data.elements import element as element_info
-from otter.data.helpers import ion_density_bohr3, mu_guess_from_density
+from otter.data.helpers import (
+    ion_density_bohr3,
+    mu_guess_from_density,
+    trapz_integral,
+)
 from otter.io import save_full_external_data
 from otter.ionic.correlation import IonSphereStepModel, ion_sphere_radius_from_density
 from otter.electronic.potential import spherical_hartree_potential
-from otter.electronic.potential import effective_potential_external, effective_potential_full
-from otter.electronic.xc import lda_xc_potential
+from otter.electronic.potential import (
+    _ion_sphere_background_hartree,
+    effective_potential_external,
+    effective_potential_full,
+)
+from otter.electronic.xc import (
+    radial_core_diagnostics,
+    resolve_gga_core_radius,
+    xc_potential,
+    xc_provenance,
+)
+from otter.literature import CitationMixin, citation_keys_for_xc_model
 from otter.electronic.solvers.bound import solve_bound_states_sparse_numerov
 
 
@@ -134,6 +157,235 @@ def _resolve_outer_geometry(cfg: "FullExternalConfig", *, r_ws: float) -> dict[s
         out["r_cut_eff_mult"] = float(cut_val / r_ws_val)
 
     return out
+
+
+def _uses_decoupled_ion_sphere_grid(
+    cfg: "FullExternalConfig",
+    *,
+    r_ws: float,
+    rmax: float,
+) -> bool:
+    """Return whether a floor/cap decouples the AA box from physical R_ws."""
+    physical_rmax = float(cfg.rmax_mult) * float(r_ws)
+    return not np.isclose(float(rmax), physical_rmax, rtol=1.0e-12, atol=1.0e-12)
+
+
+def _uses_analytic_ion_sphere_background(
+    cfg: "FullExternalConfig",
+    *,
+    r_ws: float,
+    rmax: float,
+) -> bool:
+    """Return whether the default sharp background needs analytic integration."""
+    return cfg.g_ii_override is None and _uses_decoupled_ion_sphere_grid(
+        cfg,
+        r_ws=float(r_ws),
+        rmax=float(rmax),
+    )
+
+
+def _compute_veff_asymptotic_diagnostics(
+    *,
+    r: np.ndarray,
+    v_eff: np.ndarray,
+    n_full: np.ndarray,
+    n0: float,
+    g_ii: np.ndarray,
+    z_nuc: float,
+    r_ws: float,
+    shallowest_bound_energy_ha: float = np.nan,
+    analytic_ion_sphere_background: bool = False,
+    absolute_tail_tolerance_ha: float = 1.0e-3,
+) -> dict[str, Any]:
+    """Return conservative large-radius diagnostics for the final full potential.
+
+    ``n_full`` is the density actually used for potential assembly (the
+    low-level ``n_full_source`` when source closure is active), rather than
+    necessarily the separately retained output-density profile.
+
+    The diagnostic deliberately does *not* require ``V_eff(r)`` to be monotone:
+    a physical finite-temperature screening tail may cross zero because of
+    Friedel oscillations.  Instead it records the signed extrema and maximum
+    absolute amplitude in the outer 20% of the actual SCF box, the boundary
+    value, and the net charge of the source in Starrett & Saumon's Eq. (4).
+
+    When a negative-energy threshold state is present, potential amplitudes are
+    also reported relative to its binding energy.  The resulting status is
+    diagnostic only and never changes the density, potential, bound spectrum,
+    or ``threshold_state_status``.  A ``marginal``/``unresolved`` value means
+    that the finite SCF box is not demonstrably asymptotic on the energy scale
+    needed to classify that shallow state.
+
+    References
+    ----------
+    C. E. Starrett and D. Saumon, *High Energy Density Physics* **10**,
+    35--42 (2014), Eq. (4) and Appendix B,
+    doi:10.1016/j.hedp.2013.12.001.  Charge neutrality removes the Coulomb
+    ``1/r`` tail, while the remaining screened potential need not approach
+    zero monotonically.
+    """
+    r_arr = np.asarray(r, dtype=float)
+    v_arr = np.asarray(v_eff, dtype=float)
+    n_arr = np.asarray(n_full, dtype=float)
+    g_arr = np.asarray(g_ii, dtype=float)
+    if (
+        r_arr.ndim != 1
+        or r_arr.size < 2
+        or v_arr.shape != r_arr.shape
+        or n_arr.shape != r_arr.shape
+        or g_arr.shape != r_arr.shape
+    ):
+        raise ValueError("r, v_eff, n_full, and g_ii must be aligned 1D arrays.")
+    if (
+        not np.all(np.isfinite(r_arr))
+        or not np.all(np.isfinite(v_arr))
+        or not np.all(np.isfinite(n_arr))
+        or not np.all(np.isfinite(g_arr))
+        or np.any(np.diff(r_arr) <= 0.0)
+    ):
+        raise ValueError("V_eff asymptotic diagnostics require finite increasing data.")
+    n0_val = float(n0)
+    z_val = float(z_nuc)
+    r_ws_val = float(r_ws)
+    if not np.isfinite(n0_val) or n0_val < 0.0:
+        raise ValueError("n0 must be finite and non-negative.")
+    if not np.isfinite(z_val) or z_val <= 0.0:
+        raise ValueError("z_nuc must be finite and positive.")
+    if not np.isfinite(r_ws_val) or r_ws_val <= 0.0:
+        raise ValueError("r_ws must be finite and positive.")
+    abs_tail_tol = float(absolute_tail_tolerance_ha)
+    if not np.isfinite(abs_tail_tol) or abs_tail_tol <= 0.0:
+        raise ValueError("absolute_tail_tolerance_ha must be finite and positive.")
+
+    outer_start = float(r_arr[0] + 0.8 * (r_arr[-1] - r_arr[0]))
+    outer_mask = r_arr >= outer_start
+    v_outer = v_arr[outer_mask]
+    outer_min = float(np.min(v_outer))
+    outer_max = float(np.max(v_outer))
+    outer_max_abs = float(np.max(np.abs(v_outer)))
+    boundary = float(v_arr[-1])
+
+    beyond_5rws = r_arr >= 5.0 * r_ws_val
+    if np.any(beyond_5rws):
+        v_beyond_5rws = v_arr[beyond_5rws]
+        beyond_5rws_min = float(np.min(v_beyond_5rws))
+        beyond_5rws_max = float(np.max(v_beyond_5rws))
+        beyond_5rws_max_abs = float(np.max(np.abs(v_beyond_5rws)))
+    else:
+        beyond_5rws_min = np.nan
+        beyond_5rws_max = np.nan
+        beyond_5rws_max_abs = np.nan
+
+    # Count crossings only as descriptive evidence of an oscillatory tail.
+    # It is intentionally absent from the status criteria.
+    outer_sign = np.signbit(v_outer)
+    outer_zero_crossings = int(np.count_nonzero(outer_sign[1:] != outer_sign[:-1]))
+
+    if bool(analytic_ion_sphere_background):
+        # The actual potential used an analytic -n0*Theta(r-Rws) source.
+        # Integrate (n_full-n0) over the box and restore the excluded sphere
+        # analytically, avoiding a grid-dependent step-function charge.
+        q_source = 4.0 * np.pi * trapz_integral(
+            (r_arr**2) * (n_arr - n0_val), r_arr
+        )
+        sphere_radius = min(r_ws_val, float(r_arr[-1]))
+        q_source += 4.0 * np.pi * n0_val * sphere_radius**3 / 3.0
+        source_mode = "analytic-ion-sphere"
+    else:
+        q_source = 4.0 * np.pi * trapz_integral(
+            (r_arr**2) * (n_arr - n0_val * g_arr), r_arr
+        )
+        source_mode = "sampled-gii"
+    source_residual = float(q_source - z_val)
+    source_residual_rel = float(abs(source_residual) / max(abs(z_val), 1.0e-300))
+    coulomb_edge_estimate = float(source_residual / float(r_arr[-1]))
+
+    shallow_energy = float(shallowest_bound_energy_ha)
+    has_shallow_binding = bool(np.isfinite(shallow_energy) and shallow_energy < 0.0)
+    binding = float(abs(shallow_energy)) if has_shallow_binding else np.nan
+    if has_shallow_binding:
+        boundary_ratio = float(abs(boundary) / binding)
+        outer_ratio = float(outer_max_abs / binding)
+        beyond_5rws_ratio = (
+            float(beyond_5rws_max_abs / binding)
+            if np.isfinite(beyond_5rws_max_abs)
+            else np.nan
+        )
+    else:
+        boundary_ratio = np.nan
+        outer_ratio = np.nan
+        beyond_5rws_ratio = np.nan
+
+    severe_reasons: list[str] = []
+    marginal_reasons: list[str] = []
+    if source_residual_rel > 1.0e-1:
+        severe_reasons.append("source-charge-residual-above-10-percent")
+    elif source_residual_rel > 1.0e-2:
+        marginal_reasons.append("source-charge-residual-above-1-percent")
+    # A binding-energy ratio is unavailable when no negative-energy level is
+    # returned.  Retain an absolute guard in that case (and as a backstop in
+    # all cases) so a large constant or long-range potential cannot be labelled
+    # "resolved" merely because the source charge integrates correctly.
+    if abs(boundary) > 10.0 * abs_tail_tol:
+        severe_reasons.append("boundary-potential-above-absolute-severe-tolerance")
+    elif abs(boundary) > abs_tail_tol:
+        marginal_reasons.append("boundary-potential-above-absolute-tolerance")
+    if outer_max_abs > 10.0 * abs_tail_tol:
+        severe_reasons.append("outer-potential-above-absolute-severe-tolerance")
+    elif outer_max_abs > abs_tail_tol:
+        marginal_reasons.append("outer-potential-above-absolute-tolerance")
+    if has_shallow_binding:
+        if boundary_ratio > 1.0:
+            severe_reasons.append("boundary-potential-exceeds-binding")
+        elif boundary_ratio > 1.0e-1:
+            marginal_reasons.append("boundary-potential-above-10-percent-of-binding")
+        if outer_ratio > 1.0:
+            severe_reasons.append("outer-potential-exceeds-binding")
+        elif outer_ratio > 1.0e-1:
+            marginal_reasons.append("outer-potential-above-10-percent-of-binding")
+
+    if severe_reasons:
+        status = "unresolved"
+        status_reason = ";".join(severe_reasons + marginal_reasons)
+    elif marginal_reasons:
+        status = "marginal"
+        status_reason = ";".join(marginal_reasons)
+    else:
+        status = "resolved"
+        status_reason = "outer-amplitude-and-source-charge-within-diagnostic-tolerances"
+
+    return {
+        "veff_asymptotic_boundary_ha": boundary,
+        "veff_asymptotic_outer_start_bohr": outer_start,
+        "veff_asymptotic_outer_min_ha": outer_min,
+        "veff_asymptotic_outer_max_ha": outer_max,
+        "veff_asymptotic_outer_max_abs_ha": outer_max_abs,
+        "veff_asymptotic_outer_zero_crossings": outer_zero_crossings,
+        "veff_asymptotic_beyond_5rws_min_ha": beyond_5rws_min,
+        "veff_asymptotic_beyond_5rws_max_ha": beyond_5rws_max,
+        "veff_asymptotic_beyond_5rws_max_abs_ha": beyond_5rws_max_abs,
+        "veff_asymptotic_shallow_binding_ha": binding,
+        "veff_asymptotic_boundary_to_binding_ratio": boundary_ratio,
+        "veff_asymptotic_outer_to_binding_ratio": outer_ratio,
+        "veff_asymptotic_beyond_5rws_to_binding_ratio": beyond_5rws_ratio,
+        "veff_asymptotic_source_charge_e": float(q_source),
+        "veff_asymptotic_source_charge_residual_e": source_residual,
+        "veff_asymptotic_source_charge_residual_rel": source_residual_rel,
+        "veff_asymptotic_coulomb_edge_estimate_ha": coulomb_edge_estimate,
+        "veff_asymptotic_boundary_minus_coulomb_estimate_ha": float(
+            boundary - coulomb_edge_estimate
+        ),
+        "veff_asymptotic_source_charge_mode": source_mode,
+        "veff_asymptotic_absolute_tail_tolerance_ha": abs_tail_tol,
+        "veff_asymptotic_status": status,
+        "veff_asymptotic_status_reason": status_reason,
+        "veff_asymptotic_severe_tail": bool(severe_reasons),
+        "veff_asymptotic_marginal_tail": bool(
+            marginal_reasons and not severe_reasons
+        ),
+        "veff_asymptotic_friedel_aware": True,
+        "veff_asymptotic_monotonicity_tested": False,
+    }
 
 
 def _ion_density_from_r_ws(r_ws: float) -> float:
@@ -393,7 +645,7 @@ def _resolve_species_geometry(
 
 
 @dataclass
-class FullExternalConfig:
+class FullExternalConfig(CitationMixin):
     """
     Input configuration for full->external electronic-structure solve.
 
@@ -411,6 +663,16 @@ class FullExternalConfig:
     # Electron temperature Te in eV (converted internally to Hartree).
     rho_g_cc: float
     # Mass density in g/cc.
+    electronic_model: str = "qm"
+    # Electronic-structure approximation. ``"qm"`` uses the orbital KS-AA
+    # solver; ``"tf"`` uses the finite-temperature Thomas--Fermi full/external
+    # construction of Starrett and Saumon, HEDP 10, 35--42 (2014), Eqs. (2)--(11).
+    xc_model: str = "dirac"
+    # Exchange-correlation model: dirac, pbe, an LDA alias, or libxc:<names>.
+    gga_core_mode: str = "finite"
+    # ``finite`` regularizes the nuclear GGA core; ``strict`` keeps raw GGA.
+    gga_core_zr: float = 0.05
+    # Dimensionless transition radius Z*r_c for the finite GGA core.
     r_ws_override_bohr: float | None = None
     # Optional explicit WS radius. When set, the AA sphere size is no longer
     # derived from rho_g_cc; this is the validated hook used by mixture solvers.
@@ -431,6 +693,23 @@ class FullExternalConfig:
     v_ext_init_r: np.ndarray | None = None
     # Optional source radial grid for v_ext_init. Kept for API symmetry and
     # future external-branch continuation workflows.
+    v_corr_full: np.ndarray | None = None
+    # Experimental additive full-system correlation potential on the target
+    # grid, or on v_corr_full_r when provided.  This is intended for SC/QTCP
+    # feedback diagnostics, e.g. Starrett2014 Eq.(19), and is off by default.
+    v_corr_full_r: np.ndarray | None = None
+    # Source radial grid for v_corr_full.
+    v_corr_ext: np.ndarray | None = None
+    # Experimental additive external-system correlation potential.
+    v_corr_ext_r: np.ndarray | None = None
+    # Source radial grid for v_corr_ext.
+    g_ii_override: np.ndarray | None = None
+    # Optional ion-background profile for experimental AA/TCP feedback tests.
+    # If None, use the IS ion-sphere step g_II(r)=theta(r-R_ws) from
+    # Starrett--Saumon (2014), Eq. (8).
+    g_ii_override_r: np.ndarray | None = None
+    # Source radial grid for g_ii_override. If None, g_ii_override must already
+    # live on the target AA grid.
     continuation_stage2_from_init: bool = False
     # If True and v_full_init is supplied, stage-2 starts from the interpolated
     # continuation potential instead of the stage-1 output. This is useful for
@@ -456,6 +735,38 @@ class FullExternalConfig:
     # ----- Radial domain + SCF staging -----
     rmax_mult: float = 15.0
     # Radial box size: r_max = rmax_mult * R_ws.
+    tf_scf_mix: float = 0.20
+    # Eyert/Anderson base mixing used only by the Thomas--Fermi backend.
+    tf_scf_mixing_m: int = 6
+    tf_scf_mixing_w0: float = 5.0e-4
+    tf_scf_max_iter: int = 400
+    tf_scf_tol: float = 5.0e-5
+    tf_polish_tol: float = 1.0e-10
+    tf_polish_max_iter: int = 80
+    tf_mu_tol: float = 1.0e-10
+    tf_quadrature_order: int = 160
+    bound_rmax_mult: float | None = None
+    # Experimental bound-only box extension.  The Starrett--Saumon (2014)
+    # Appendix-A calculation uses one AA domain (typically 15 R_WS); it does
+    # not prescribe a separate 40 R_WS bound box.  When this option is set,
+    # Otter extends the converged SCF potential by an artificial zero tail, so
+    # the result is a numerical sensitivity diagnostic rather than additional
+    # physical plasma volume.  The production default therefore uses the same
+    # domain for bound, continuum, and SCF calculations.
+    bound_zero_tail_refine: bool = False
+    # Optional low-l threshold check.  With no bound_rmax_mult it replaces a
+    # shallow Dirichlet-box orbital by an analytic exterior-matched pole
+    # normalized over all space, but only when the common physical SCF
+    # boundary is already asymptotic on the binding-energy scale.  With an
+    # explicitly requested bound-only zero extension it is instead a numerical
+    # sensitivity diagnostic.  Neither path is a production default.
+    # Starrett et al. (CPC 235, 50--62, 2019), Eqs. (21)-(22), give the
+    # non-relativistic negative-energy exterior matching and normalization.
+    bound_zero_tail_min_binding_ha: float = 1.0e-8
+    bound_zero_tail_max_binding_ha: float = 1.0e-3
+    bound_zero_tail_scan_points: int = 24
+    bound_zero_tail_l_max: int = 0
+    bound_zero_tail_edge_rel_tol: float = 0.25
     geometry_r_ws_floor_bohr: float = 0.8
     # Numerical geometry scale floor (Bohr). When R_ws is smaller than this
     # value, all outer-geometry multipliers are applied to this floor instead
@@ -471,6 +782,11 @@ class FullExternalConfig:
     # Number of radial grid points (sqrt grid used internally).
     mu_bounds: tuple[float, float] = (-200.0, 200.0)
     # Brent bracket for inner mu-neutral solver (Ha).
+    full_fixed_mu_ha: float | None = None
+    # Optional fixed full-branch chemical potential [Ha]. This is disabled by
+    # default. It is intended for Starrett SC/QTCP diagnostics, where the
+    # outer feedback loop keeps the ion-sphere chemical potential fixed instead
+    # of re-solving neutrality after each ion-electron correlation update.
     mu_guess_zbar: float = 2.0
     # Initial mu guess from ideal free-electron estimate with this Zbar.
     stage1_max_iter: int = 5
@@ -489,7 +805,7 @@ class FullExternalConfig:
     # Bound basis policy:
     #   "auto"   -> infer l_list / per-l radial caps from the element
     #   "manual" -> use user-supplied n_states / l_list
-    n_states: int = 5
+    n_states: int = 3
     # Manual bound solver principal-state cap. In auto mode this is used only
     # when the user overrides the historical default.
     l_list: np.ndarray | None = None
@@ -519,8 +835,47 @@ class FullExternalConfig:
     # Minimum allowed energy interval width before stopping refinement (Ha).
     cont_e_base_grid: str = "sqrt"
     # Initial energy-grid distribution ("sqrt" gives denser low-E sampling).
-    cont_e_min: float = 1e-4
-    # Minimum continuum energy (Ha).
+    cont_e_min: float = 1e-6
+    # Minimum continuum energy (Ha).  The lower floor, together with the
+    # logarithmic anchors below, resolves the s-wave spectral-weight transfer
+    # when a very shallow bound state pressure-ionizes.  Wilson et al. (2006),
+    # Appendix A.4, shows why this threshold limit must remain continuous.
+    cont_near_zero_log_grid: bool = True
+    # Insert logarithmic energy anchors between cont_e_min and the first
+    # ordinary sqrt-grid node.  This is a threshold quadrature guard, not an
+    # l=0 shape-resonance classifier (ordinary s waves do not form those).
+    cont_near_zero_log_points_per_decade: int = 4
+    # Number of logarithmic threshold anchors requested per energy decade.
+    cont_near_zero_log_max_nodes: int = 24
+    # Hard cap on the added low-energy nodes per adaptive integration domain.
+    cont_near_zero_log_max_energy: float | None = 1.0e-2
+    # Do not add threshold anchors above this energy [Ha].
+    cont_resonance_theta_l_min: int = 1
+    # Lowest partial wave included in the optional phase-root resonance scout.
+    # Keep l=0 excluded: an s-wave threshold state is handled by the low-energy
+    # mesh above and does not form an ordinary centrifugal shape resonance.
+    cont_resonance_theta_probe_count: int = 1
+    # Interior phase probes inserted in every base-energy panel when
+    # cont_adaptive_mode_stage{1,2}="phase-root".
+    cont_resonance_theta_scan_depth: int = 3
+    # Nested dyadic scout depth for off-anchor matching-coefficient roots.
+    # This gives a measurable finite resolution but cannot guarantee an
+    # arbitrary ultra-narrow even root pair; see Wilson et al., JQSRT 99,
+    # 658-679 (2006), Sec. 6, for the more complete a(E), b(E), Theta(E) idea.
+    cont_resonance_theta_scout_max_extra_nodes: int | None = 128
+    # Global cap on extra scout nodes beyond mandatory base/log anchors.  The
+    # budget is shared across energy shards (phase-root currently forces the
+    # safer global batch mode so symmetric root windows cross no shard edge).
+    cont_resonance_theta_root_tol: float | None = None
+    # Brent tolerance [Ha] for a bracketed normalized matching-coefficient root.
+    cont_resonance_theta_sharpness_min: float = 2.0
+    # Reject broad phase crossings whose dimensionless panel-scale slope is
+    # below this value; they remain covered by the ordinary quadrature.
+    cont_resonance_theta_max_roots: int | None = None
+    # Optional hard cap on the sharpest roots retained per integration domain.
+    cont_resonance_theta_refine_depth: int | None = None
+    # Optional recursion-depth override inside explicitly located resonance
+    # panels. None adds the continuum solver's bounded default allowance.
     cont_e_max: float | None = None
     # Fixed continuum energy ceiling (Ha). If left unset, stage 1 defaults to
     # max(10 * T_e[Ha], 5 Ha).
@@ -586,17 +941,37 @@ class FullExternalConfig:
     b3_tail_stage2_mode: str = "in_scf"
     # Same choices as b3_tail_stage1_mode, but for stage-2.
     b3_tail_target: str = "cont"
-    # Tail replacement target. For the current validated path we only support
-    # "cont", i.e. replace the continuum contribution and then rebuild n_full.
+    # Tail replacement target:
+    #   "cont" -> replace n_cont and then rebuild n_full (historical default)
+    #   "full" -> fit n_full itself, as stated in Starrett & Saumon (2014),
+    #             Appendix B; important when a diffuse threshold orbital
+    #             extends beyond the handoff radius
+    #   "both" -> apply both operations for diagnostics
+    # The literal full-density path remains opt-in until its pressure-
+    # ionization common-mu regression is converged across the validation grid.
     b3_tail_fit_points: int = 20
     # Number of fit samples used by the B3 least-squares handoff.
+    b3_tail_local_fit_width_mult: float | None = 0.064
+    # Physical width of the local B3 matching stencil in units of R_ws.
+    # A fixed point count alone changes the fitted radial interval when
+    # n_points changes.  None retains that legacy, grid-dependent behavior.
+    b3_tail_fit_window_mode: str = "local"
+    # Placement of those fit samples:
+    #   "auto"     -> for Appendix-B "full"/"both", span the physical window
+    #                 only while its right edge retains >=10% of the Friedel
+    #                 envelope; retain the validated local stencil for "cont"
+    #   "physical" -> distribute samples across [r_cut, r_fit_max]
+    #   "local"    -> distribute samples over the short physical stencil
+    #                 after r_cut (or consecutive grid points when
+    #                 b3_tail_local_fit_width_mult=None)
     b3_tail_blend_points: int = 10
     # Number of smoothing samples around the A3 -> B3 splice.
-    b3_tail_model: str = "auto"
+    b3_tail_model: str = "full"
     # Tail model choice:
-    #   "full"   -> always use the full B3 oscillatory ansatz
+    #   "full"   -> always use the full B3 oscillatory ansatz (default)
     #   "a_only" -> force the monotone Yukawa/TF term only
-    #   "auto"   -> keep the full B3 term only when it improves the fit enough
+    #   "auto"   -> diagnostic selector: keep the full B3 term only when it
+    #               improves the fit enough
     b3_tail_auto_rel_improve_tol: float = 0.2
     # In auto mode, require at least this relative RMS improvement before the
     # oscillatory B3 term is accepted over the simpler A-only tail.
@@ -665,9 +1040,33 @@ class FullExternalConfig:
     # (or r_max when no continuum truncation is used).
     source_charge_closure: bool = True
     # Enforce integrated source charge closure in outer region.
-    full_b3_use_source_closure: bool = True
-    # If True, keep source_closure active in full SCF even when B3 is used
-    # in_scf. This preserves the historically stable full workflow.
+    b3_source_charge_constraint: bool = False
+    # When B3 is active in-SCF, impose the finite-box source-charge sum rule
+    # directly on its linear (A,C,D) coefficients:
+    #   integral[n_full - n0*g_II] = Z,
+    #   integral[n_ext  - n0*g_II] = 0.
+    # This is an experimental replacement for the historical uniform
+    # outer-density correction. It is deliberately opt-in until its fitted
+    # amplitudes and residuals are validated across the benchmark grid.
+    b3_charge_constraint_fit_rms_ratio_max: float | None = 10.0
+    # Reject an exact-charge B3 candidate when its local fit RMS is more than
+    # this factor above the corresponding unconstrained B3 fit.  Ten is a
+    # deliberately permissive guard against catastrophic extrapolation, not a
+    # model-selection preference.  Set None to disable this acceptance check.
+    b3_charge_constraint_profile_delta_rel_max: float | None = 10.0
+    # Reject when the spherical L2 norm of the constrained-minus-unconstrained
+    # tail exceeds this factor times the unconstrained B3 response norm.  This
+    # is invariant to coefficient units and basis rescaling.  Set None to
+    # disable this acceptance check.
+    # Finite/non-negative density and post-Hermite charge closure are always
+    # required even when both optional quality guards are disabled.
+    full_b3_use_source_closure: bool | None = None
+    # Full-branch source-closure policy while B3 is used in-SCF:
+    #   None/auto -> disable it for b3_tail_target="full"/"both", because B3
+    #                already supplies the matched total density; retain the
+    #                historical closure for b3_tail_target="cont"
+    #   True      -> force the legacy source closure
+    #   False     -> use the matched B3 density directly
     ext_b3_use_source_closure: bool | None = None
     # External-branch source-closure policy when ext B3 is active:
     #   None/auto -> enable only after the rebuilt ext tail is already close
@@ -690,13 +1089,15 @@ class FullExternalConfig:
     n0_fixed_override: float | None = None
     # Optional explicit `n0` used only when `n0_mode_override="fixed"`.
 
-    # ----- Optional pseudoatom/screening tail repair -----
+    # ----- Optional pseudoatom/screening tail diagnostic -----
     screening_tail_repair_mode: str = "off"
-    # Optional downstream repair applied only to the reported pseudoatom /
-    # screening densities after the final full+ext solve:
-    #   "off"            -> leave n_pa / n_scr unchanged
-    #   "constrained_b3" -> refit the n_scr tail on a B3/Friedel basis while
-    #                       enforcing the full-AA Zbar charge target
+    # Optional downstream diagnostic evaluated after the final full+ext solve:
+    #   "off"            -> do not construct a fitted screening tail
+    #   "constrained_b3" -> report n_scr_repaired / n_pa_repaired from a
+    #                       B3/Friedel fit constrained to Z-Q_ion(all)
+    # The canonical n_scr=n_full-n_ext-n_ion and n_pa=n_full-n_ext profiles
+    # are never overwritten.  A separately fitted screening tail is not an
+    # electronic SCF solution and must not be passed to QOZ as though it were.
     screening_tail_repair_rel_tol: float = 5.0e-2
     # Only apply the repair when |Q_scr(box)-Zbar|/Zbar exceeds this threshold.
     screening_tail_charge_weight: float = 1.0e3
@@ -724,6 +1125,16 @@ class FullExternalConfig:
     # Eyert history size M.
     scf_mixing_w0: float = 5e-4
     # Eyert regularization weight.
+    ph_kappa: float = 0.0
+    # Poisson-Helmholtz preconditioner [Bohr^-1]. A positive value screens
+    # the Hartree source only during the first ``ph_kappa_iters`` updates of
+    # each SCF stage. It is a convergence aid, not part of the final physical
+    # model: an accepted fixed point must include an ordinary kappa=0 Poisson
+    # update. The default preserves the historical unscreened workflow.
+    ph_kappa_iters: int = 0
+    # Number of initial updates that use ``ph_kappa``. Stage-1, stage-2, and
+    # the optional external fixed-mu SCF each count their own iterations.
+    # Zero disables Poisson-Helmholtz preconditioning.
     full_v_eff_outer_decay: bool = False
     # Experimental non-Starrett taper: multiply full V_eff by an exponential
     # factor for r > full_v_eff_outer_decay_start_rws * R_ws.
@@ -731,6 +1142,11 @@ class FullExternalConfig:
     # Start radius of the outer V_eff taper in units of R_ws.
     full_v_eff_outer_decay_length_rws: float = 0.5
     # Exponential decay length of the taper in units of R_ws.
+    veff_asymptotic_abs_tol_ha: float = 1.0e-3
+    # Diagnostic (non-mutating) absolute tolerance for the final potential in
+    # the outer 20% of the AA box. Values above 10 times this tolerance are
+    # marked unresolved even when no shallow bound level supplies an energy
+    # scale. 1e-3 Ha is about 0.027 eV.
 
     # ----- External fixed-mu SCF mixer -----
     ext_scf_enabled: bool = True
@@ -760,6 +1176,11 @@ class FullExternalConfig:
     # Bound/continuum split mode ("v_frac" is the validated default:'zero', 'v_ws', 'fixed').
     bound_energy_cut: float = 0.70
     # When mode="v_frac", use V_eff(r=bound_energy_cut*r_max) as threshold.
+    bound_occ_mode: str = "fd"
+    # Occupation used for n_bound and therefore n_full in the SCF map.
+    # Starrett2013 applies the pressure-ionization weight M(e) to n_ion
+    # [Eq. (79)], not to the total bound density in n_full. Keep "fd" as the
+    # production default; "fd_m" is retained as a diagnostic/legacy option.
     ion_cut_mode: str = "starrett"
     # Radial cutoff used when assembling n_ion from bound states.
     ion_cut_c: float = 0.05
@@ -771,8 +1192,10 @@ class FullExternalConfig:
     ion_gamma_scale: float = 1.0
     # Multiplier for the scattering-derived gamma. The fixed-gamma path ignores
     # this knob so ion_bound_gamma remains an absolute width.
-    ion_ws_weight_min: float = 0.5
-    # Optional WS localization filter applied when assembling n_ion.
+    ion_ws_weight_min: float = 0.0
+    # Optional hard WS-localization filter applied when assembling n_ion.
+    # Starrett2013 already localizes n_ion continuously through f_cut(r) and
+    # M(E), so the public default keeps this extra binary filter disabled.
     bound_table_n_jobs: int = 1
     # Parallel workers used only for post-SCF bound tables/DOS construction.
     # Keep 1 by default to avoid multiprocessing re-entry issues in ad-hoc scripts.
@@ -813,6 +1236,43 @@ class FullExternalConfig:
         numerical radius and B3 handoff radii are inferred from density unless
         the user overrides them explicitly.
         """
+        electronic_model = str(self.electronic_model).strip().lower().replace("-", "_")
+        if electronic_model in {"ks", "ks_aa", "quantum"}:
+            electronic_model = "qm"
+        elif electronic_model in {"thomas_fermi", "thomasfermi"}:
+            electronic_model = "tf"
+        if electronic_model not in {"qm", "tf"}:
+            raise ValueError("electronic_model must be 'qm' or 'tf'.")
+        self.electronic_model = electronic_model
+        self.gga_core_mode = str(self.gga_core_mode).strip().lower()
+        if self.gga_core_mode not in {"finite", "strict"}:
+            raise ValueError("gga_core_mode must be 'finite' or 'strict'.")
+        if (
+            not np.isfinite(float(self.gga_core_zr))
+            or float(self.gga_core_zr) <= 0.0
+        ):
+            raise ValueError("gga_core_zr must be finite and positive.")
+        if not (0.0 < float(self.tf_scf_mix) <= 1.0):
+            raise ValueError("tf_scf_mix must lie in (0, 1].")
+        if int(self.tf_scf_mixing_m) < 1:
+            raise ValueError("tf_scf_mixing_m must be at least 1.")
+        if float(self.tf_scf_mixing_w0) <= 0.0:
+            raise ValueError("tf_scf_mixing_w0 must be positive.")
+        if int(self.tf_scf_max_iter) < 1:
+            raise ValueError("tf_scf_max_iter must be at least 1.")
+        if int(self.tf_polish_max_iter) < 1:
+            raise ValueError("tf_polish_max_iter must be at least 1.")
+        if (
+            float(self.tf_scf_tol) <= 0.0
+            or float(self.tf_polish_tol) <= 0.0
+            or float(self.tf_mu_tol) <= 0.0
+        ):
+            raise ValueError(
+                "tf_scf_tol, tf_polish_tol, and tf_mu_tol must be positive."
+            )
+        if int(self.tf_quadrature_order) < 16:
+            raise ValueError("tf_quadrature_order must be at least 16.")
+
         if self.cont_e_max is None:
             te_ha = max(float(self.temperature_ev) * EV_TO_HA, 1.0e-12)
             # Stage 1 needs a conservative floor. Pure 10*T works at moderate
@@ -821,12 +1281,88 @@ class FullExternalConfig:
             # continuum branch is established.
             self.cont_e_max = max(float(self.cont_e_min), 10.0 * te_ha, 5.0)
 
+        if not np.isfinite(float(self.rmax_mult)) or float(self.rmax_mult) <= 0.0:
+            raise ValueError("rmax_mult must be finite and positive.")
+        if not np.isfinite(float(self.cont_e_min)) or float(self.cont_e_min) <= 0.0:
+            raise ValueError("cont_e_min must be finite and positive.")
+        if int(self.cont_near_zero_log_points_per_decade) < 0:
+            raise ValueError("cont_near_zero_log_points_per_decade must be non-negative.")
+        if int(self.cont_near_zero_log_max_nodes) < 0:
+            raise ValueError("cont_near_zero_log_max_nodes must be non-negative.")
+        if self.cont_near_zero_log_max_energy is not None:
+            near_zero_max = float(self.cont_near_zero_log_max_energy)
+            if not np.isfinite(near_zero_max) or near_zero_max <= 0.0:
+                raise ValueError(
+                    "cont_near_zero_log_max_energy must be finite and positive when set."
+                )
+        if int(self.cont_resonance_theta_l_min) < 0:
+            raise ValueError("cont_resonance_theta_l_min must be non-negative.")
+        if int(self.cont_resonance_theta_probe_count) < 0:
+            raise ValueError("cont_resonance_theta_probe_count must be non-negative.")
+        if int(self.cont_resonance_theta_scan_depth) < 0:
+            raise ValueError("cont_resonance_theta_scan_depth must be non-negative.")
+        if (
+            self.cont_resonance_theta_scout_max_extra_nodes is not None
+            and int(self.cont_resonance_theta_scout_max_extra_nodes) < 0
+        ):
+            raise ValueError(
+                "cont_resonance_theta_scout_max_extra_nodes must be non-negative when set."
+            )
+        if self.cont_resonance_theta_root_tol is not None:
+            root_tol = float(self.cont_resonance_theta_root_tol)
+            if not np.isfinite(root_tol) or root_tol <= 0.0:
+                raise ValueError(
+                    "cont_resonance_theta_root_tol must be finite and positive when set."
+                )
+        sharpness = float(self.cont_resonance_theta_sharpness_min)
+        if not np.isfinite(sharpness) or sharpness < 0.0:
+            raise ValueError(
+                "cont_resonance_theta_sharpness_min must be finite and non-negative."
+            )
+        if (
+            self.cont_resonance_theta_max_roots is not None
+            and int(self.cont_resonance_theta_max_roots) < 0
+        ):
+            raise ValueError("cont_resonance_theta_max_roots must be non-negative when set.")
+        if (
+            self.cont_resonance_theta_refine_depth is not None
+            and int(self.cont_resonance_theta_refine_depth) < 0
+        ):
+            raise ValueError(
+                "cont_resonance_theta_refine_depth must be non-negative when set."
+            )
         if float(self.geometry_r_ws_floor_bohr) <= 0.0:
             raise ValueError("geometry_r_ws_floor_bohr must be positive.")
+        if self.bound_rmax_mult is not None:
+            bound_rmax_mult = float(self.bound_rmax_mult)
+            if not np.isfinite(bound_rmax_mult) or bound_rmax_mult < float(self.rmax_mult):
+                raise ValueError(
+                    "bound_rmax_mult must be finite and >= rmax_mult when set."
+                )
+        if not (
+            0.0 < float(self.bound_zero_tail_min_binding_ha)
+            < float(self.bound_zero_tail_max_binding_ha)
+        ):
+            raise ValueError(
+                "Require 0 < bound_zero_tail_min_binding_ha < "
+                "bound_zero_tail_max_binding_ha."
+            )
+        if int(self.bound_zero_tail_scan_points) < 3:
+            raise ValueError("bound_zero_tail_scan_points must be at least three.")
+        if int(self.bound_zero_tail_l_max) < 0:
+            raise ValueError("bound_zero_tail_l_max must be non-negative.")
+        if not np.isfinite(float(self.bound_zero_tail_edge_rel_tol)) or float(
+            self.bound_zero_tail_edge_rel_tol
+        ) <= 0.0:
+            raise ValueError("bound_zero_tail_edge_rel_tol must be finite and positive.")
         ion_gamma_mode = str(self.ion_gamma_mode).lower().strip()
         if ion_gamma_mode not in ("fixed", "scattering"):
             raise ValueError("ion_gamma_mode must be 'fixed' or 'scattering'.")
         self.ion_gamma_mode = ion_gamma_mode
+        bound_occ_mode = str(self.bound_occ_mode).lower().strip()
+        if bound_occ_mode not in ("fd", "fd_m"):
+            raise ValueError("bound_occ_mode must be 'fd' or 'fd_m'.")
+        self.bound_occ_mode = bound_occ_mode
         if float(self.ion_gamma_scale) <= 0.0:
             raise ValueError("ion_gamma_scale must be positive.")
         ion_cut_mode = str(self.ion_cut_mode).lower().strip()
@@ -841,6 +1377,19 @@ class FullExternalConfig:
             raise ValueError("full_v_eff_outer_decay_start_rws must be non-negative.")
         if float(self.full_v_eff_outer_decay_length_rws) <= 0.0:
             raise ValueError("full_v_eff_outer_decay_length_rws must be positive.")
+        if (
+            not np.isfinite(float(self.veff_asymptotic_abs_tol_ha))
+            or float(self.veff_asymptotic_abs_tol_ha) <= 0.0
+        ):
+            raise ValueError("veff_asymptotic_abs_tol_ha must be finite and positive.")
+        if not np.isfinite(float(self.ph_kappa)) or float(self.ph_kappa) < 0.0:
+            raise ValueError("ph_kappa must be finite and non-negative.")
+        if int(self.ph_kappa_iters) < 0:
+            raise ValueError("ph_kappa_iters must be non-negative.")
+        if float(self.ph_kappa) > 0.0 and int(self.ph_kappa_iters) == 0:
+            raise ValueError("ph_kappa_iters must be positive when ph_kappa > 0.")
+        if float(self.ph_kappa) == 0.0 and int(self.ph_kappa_iters) > 0:
+            raise ValueError("ph_kappa must be positive when ph_kappa_iters > 0.")
         if self.continuation_scf_mixing_scheme is not None:
             cont_scheme = str(self.continuation_scf_mixing_scheme).strip().lower()
             if cont_scheme not in ("linear", "eyert"):
@@ -890,11 +1439,38 @@ class FullExternalConfig:
         if tail_model not in ("auto", "full", "a_only"):
             raise ValueError("b3_tail_model must be 'auto', 'full', or 'a_only'.")
         self.b3_tail_model = tail_model
+        fit_window_mode = str(self.b3_tail_fit_window_mode).strip().lower()
+        if fit_window_mode not in ("auto", "physical", "local"):
+            raise ValueError(
+                "b3_tail_fit_window_mode must be 'auto', 'physical', or 'local'."
+            )
+        self.b3_tail_fit_window_mode = fit_window_mode
+        if self.b3_tail_local_fit_width_mult is not None:
+            local_width_mult = float(self.b3_tail_local_fit_width_mult)
+            if not np.isfinite(local_width_mult) or local_width_mult <= 0.0:
+                raise ValueError(
+                    "b3_tail_local_fit_width_mult must be finite and positive, or None."
+                )
+            self.b3_tail_local_fit_width_mult = local_width_mult
         if self.ext_b3_tail_model is not None:
             ext_tail_model = str(self.ext_b3_tail_model).strip().lower()
             if ext_tail_model not in ("auto", "full", "a_only"):
                 raise ValueError("ext_b3_tail_model must be 'auto', 'full', or 'a_only'.")
             self.ext_b3_tail_model = ext_tail_model
+        if isinstance(self.full_b3_use_source_closure, str):
+            source_mode = str(self.full_b3_use_source_closure).strip().lower()
+            if source_mode == "auto":
+                self.full_b3_use_source_closure = None
+            elif source_mode in ("true", "on", "yes", "1"):
+                self.full_b3_use_source_closure = True
+            elif source_mode in ("false", "off", "no", "0"):
+                self.full_b3_use_source_closure = False
+            else:
+                raise ValueError(
+                    "full_b3_use_source_closure must be True, False, None, or 'auto'."
+                )
+        elif self.full_b3_use_source_closure is not None:
+            self.full_b3_use_source_closure = bool(self.full_b3_use_source_closure)
         if isinstance(self.ext_b3_use_source_closure, str):
             source_mode = str(self.ext_b3_use_source_closure).strip().lower()
             if source_mode == "auto":
@@ -913,6 +1489,25 @@ class FullExternalConfig:
             raise ValueError("b3_tail_auto_rel_improve_tol must be non-negative.")
         if float(self.b3_tail_auto_signal_rel_tol) < 0.0:
             raise ValueError("b3_tail_auto_signal_rel_tol must be non-negative.")
+        if self.b3_charge_constraint_fit_rms_ratio_max is not None:
+            fit_ratio_max = float(self.b3_charge_constraint_fit_rms_ratio_max)
+            if not np.isfinite(fit_ratio_max) or fit_ratio_max <= 0.0:
+                raise ValueError(
+                    "b3_charge_constraint_fit_rms_ratio_max must be finite and "
+                    "positive when set."
+                )
+        if self.b3_charge_constraint_profile_delta_rel_max is not None:
+            profile_delta_rel_max = float(
+                self.b3_charge_constraint_profile_delta_rel_max
+            )
+            if (
+                not np.isfinite(profile_delta_rel_max)
+                or profile_delta_rel_max <= 0.0
+            ):
+                raise ValueError(
+                    "b3_charge_constraint_profile_delta_rel_max must be finite "
+                    "and positive when set."
+                )
         if float(self.ext_source_closure_auto_rel_tol) < 0.0:
             raise ValueError("ext_source_closure_auto_rel_tol must be non-negative.")
 
@@ -975,7 +1570,26 @@ class FullExternalConfig:
         if n_states_by_l.size == 0:
             return 1
         return int(np.max(n_states_by_l))
-def _ws_charge(r: np.ndarray, density: np.ndarray, r_ws: float) -> float:
+
+    @property
+    def citation_keys(self) -> tuple[str, ...]:
+        """Primary papers for the full/external calculation and XC model."""
+        return (
+            "StarrettSaumon2014",
+            "PillaiGoglioWalker2012",
+            "WilsonEtAl2006",
+            "StarrettEtAl2019",
+            *citation_keys_for_xc_model(self.xc_model),
+        )
+
+
+def _ws_charge(
+    r: np.ndarray,
+    density: np.ndarray,
+    r_ws: float,
+    *,
+    interpolate_boundary: bool = False,
+) -> float:
     """
     Integrate one radial density inside the WS sphere.
 
@@ -984,12 +1598,18 @@ def _ws_charge(r: np.ndarray, density: np.ndarray, r_ws: float) -> float:
     """
     r = np.asarray(r, dtype=float)
     density = np.asarray(density, dtype=float)
+    if bool(interpolate_boundary):
+        return _electron_count(r, density, float(r_ws), interpolate_boundary=True)
     mask = r <= float(r_ws)
     if not np.any(mask):
         return 0.0
     r_ws_slice = r[mask]
     n_ws_slice = density[mask]
-    return float(4.0 * np.pi * np.trapezoid((r_ws_slice**2) * n_ws_slice, r_ws_slice))
+    return float(
+        4.0
+        * np.pi
+        * trapz_integral((r_ws_slice**2) * n_ws_slice, r_ws_slice)
+    )
 
 
 def _tail_shift_value(r: np.ndarray, v: np.ndarray, frac: float = 0.05) -> float:
@@ -1054,7 +1674,9 @@ def _repair_screening_density_tail(
     n_scr
         Screening density on `r` in Bohr^-3.
     zbar
-        Fixed net ionic charge from the converged full AA solution.
+        Target partition charge.  The production full/external caller uses
+        ``Z - integral(n_ion)`` over the complete pseudoatom box, consistent
+        with Starrett--Saumon Eqs. (73), (75), and (76).
     mu_id
         Chemical potential used for the B3 tail parameters in Ha.
     temperature
@@ -1117,7 +1739,10 @@ def _repair_screening_density_tail(
 
     # (2) Add one global charge-closure equation for the replaced tail.
     r_tail = r_arr[idx_cut:]
-    q_inner = 4.0 * np.pi * float(np.trapezoid((r_arr[:idx_cut] ** 2) * n_arr[:idx_cut], r_arr[:idx_cut]))
+    q_inner = 4.0 * np.pi * trapz_integral(
+        (r_arr[:idx_cut] ** 2) * n_arr[:idx_cut],
+        r_arr[:idx_cut],
+    )
     target_tail_charge = float(zbar) - float(q_inner)
 
     f0_tail = np.exp(-k_tf * r_tail) / r_tail
@@ -1127,7 +1752,9 @@ def _repair_screening_density_tail(
     basis_tail = np.column_stack((f0_tail, f1_tail, f2_tail))
     charge_row = np.asarray(
         [
-            4.0 * np.pi * float(np.trapezoid((r_tail**2) * basis_tail[:, col], r_tail))
+            4.0
+            * np.pi
+            * trapz_integral((r_tail**2) * basis_tail[:, col], r_tail)
             for col in range(3)
         ],
         dtype=float,
@@ -1147,8 +1774,8 @@ def _repair_screening_density_tail(
     n_out = np.asarray(n_arr, dtype=float).copy()
     n_out[idx_cut:] = basis_tail @ coeffs
 
-    q_raw = 4.0 * np.pi * float(np.trapezoid((r_arr**2) * n_arr, r_arr))
-    q_new = 4.0 * np.pi * float(np.trapezoid((r_arr**2) * n_out, r_arr))
+    q_raw = 4.0 * np.pi * trapz_integral((r_arr**2) * n_arr, r_arr)
+    q_new = 4.0 * np.pi * trapz_integral((r_arr**2) * n_out, r_arr)
     meta: dict[str, float | bool | str | None] = {
         "mode": "constrained_b3",
         "applied": True,
@@ -1203,6 +1830,9 @@ def _resolve_b3_tail_controls(
     target = str(cfg.b3_tail_target or cfg.cont_tail_match_target).strip().lower()
     if target not in ("cont", "full", "both"):
         raise ValueError("b3_tail_target must be 'cont', 'full', or 'both'.")
+    fit_window_mode = str(cfg.b3_tail_fit_window_mode).strip().lower()
+    if fit_window_mode == "auto" and target == "cont":
+        fit_window_mode = "local"
 
     geometry = _resolve_outer_geometry(cfg, r_ws=r_ws)
     rmax_eff = float(geometry["rmax"])
@@ -1248,6 +1878,12 @@ def _resolve_b3_tail_controls(
         "r_fit_max": r_fit_max,
         "r_cut": r_cut,
         "fit_points": int(cfg.b3_tail_fit_points or cfg.cont_tail_fit_points),
+        "local_fit_width": (
+            None
+            if cfg.b3_tail_local_fit_width_mult is None
+            else float(cfg.b3_tail_local_fit_width_mult) * float(r_ws)
+        ),
+        "fit_window_mode": str(fit_window_mode),
         "blend_points": int(cfg.b3_tail_blend_points or cfg.cont_tail_blend_points),
         "model": str(cfg.b3_tail_model),
         "auto_rel_improve_tol": float(cfg.b3_tail_auto_rel_improve_tol),
@@ -1267,8 +1903,19 @@ def _apply_b3_post_to_full_result(
     """
     Replace only the final full-continuum tail by B3 after SCF convergence.
 
-    This keeps the validated pure-A3 SCF fixed point intact while letting us
-    test whether the B3 tail itself is physically sensible.
+    This keeps the pure-A3 SCF fixed point intact while letting us test whether
+    the B3 tail itself is physically sensible.  The returned postprocessed
+    density is not a new SCF fixed point: ``v_full`` remains the potential that
+    generated the A3 orbitals.  We therefore expose the potential rebuilt from
+    the post-B3 density separately as ``v_post_from_density`` rather than
+    labelling it ``v_scf``.
+
+    Notes
+    -----
+    Starrett & Saumon (2014), Appendix B, use Eq. (B3) inside their iterative
+    density construction and require convergence with respect to the matching
+    radius.  This ``post`` mode is intentionally a tail-sensitivity diagnostic;
+    ``in_scf`` is the self-consistent B3 path.
     """
     controls = _resolve_b3_tail_controls(cfg, r_ws=r_ws, rmax=rmax, stage_mode=stage_mode)
     if controls["mode"] != "post":
@@ -1291,7 +1938,8 @@ def _apply_b3_post_to_full_result(
     fit_points = int(controls["fit_points"])
     if controls["r_fit_max"] is not None:
         idx_fit_max = int(np.searchsorted(r, float(controls["r_fit_max"]), side="right"))
-        fit_points = max(3, min(fit_points, idx_fit_max - idx_cut))
+        if idx_fit_max - idx_cut < 3:
+            return result
     if fit_points < 3:
         return result
 
@@ -1304,6 +1952,13 @@ def _apply_b3_post_to_full_result(
             temperature_ha,
             idx_cut,
             fit_points=fit_points,
+            r_fit_max=(
+                controls["r_fit_max"]
+                if str(controls["fit_window_mode"]) in ("auto", "physical")
+                else None
+            ),
+            local_fit_width=controls["local_fit_width"],
+            fit_window_mode=str(controls["fit_window_mode"]),
             blend_points=int(controls["blend_points"]),
             model=str(controls["model"]),
             auto_rel_improve_tol=float(controls["auto_rel_improve_tol"]),
@@ -1317,16 +1972,32 @@ def _apply_b3_post_to_full_result(
     out = dict(result)
     out["n_cont"] = np.asarray(n_cont_b3, dtype=float)
     out["n_full"] = np.asarray(n_bound + n_cont_b3, dtype=float)
-    out["v_scf"] = effective_potential_full(
+    out["v_full_fixed_point"] = np.asarray(result["v_full"], dtype=float).copy()
+    out["v_post_from_density"] = effective_potential_full(
         r,
         np.asarray(out["n_full"], dtype=float),
         n0,
         np.asarray(out["g_ii"], dtype=float),
         float(out["Z"]),
-        xc_model="dirac",
+        xc_model=cfg.xc_model,
         kappa=0.0,
+        ion_sphere_radius=(
+            float(r_ws)
+            if _uses_analytic_ion_sphere_background(
+                cfg, r_ws=float(r_ws), rmax=float(rmax)
+            )
+            else None
+        ),
+        gga_core_mode=cfg.gga_core_mode,
+        gga_core_zr=cfg.gga_core_zr,
     )
-    out["b3_tail_meta"] = dict(tail_meta)
+    out["b3_tail_meta"] = {
+        **dict(tail_meta),
+        "self_consistent": False,
+        "diagnostic_only": True,
+        "background_n0_mode": str(_resolve_n0_mode(cfg, b3_tail_mode="post")),
+    }
+    out["b3_post_self_consistent"] = False
     out["b3_tail_r_cut"] = float(controls["r_cut"])
     out["b3_tail_r_fit_max"] = None if controls["r_fit_max"] is None else float(controls["r_fit_max"])
     return out
@@ -1356,11 +2027,51 @@ def _build_continuum_params(
     if for_external and cfg.ext_b3_tail_model is not None:
         tail_model = str(cfg.ext_b3_tail_model).strip().lower()
 
+    use_full_b3_source_closure = _resolve_full_b3_source_closure_policy(
+        setting=cfg.full_b3_use_source_closure,
+        tail_target=str(b3["target"]),
+    )
     params: dict[str, Any] = {
         "l_max": int(max(l_max_value, 0)),
         "l_max_ceiling": 150,
         "l_pad": int(l_pad),
         "e_min": float(cfg.cont_e_min),
+        "near_zero_log_grid": bool(cfg.cont_near_zero_log_grid),
+        "near_zero_log_points_per_decade": int(
+            cfg.cont_near_zero_log_points_per_decade
+        ),
+        "near_zero_log_max_nodes": int(cfg.cont_near_zero_log_max_nodes),
+        "near_zero_log_max_energy": (
+            None
+            if cfg.cont_near_zero_log_max_energy is None
+            else float(cfg.cont_near_zero_log_max_energy)
+        ),
+        "resonance_theta_l_min": int(cfg.cont_resonance_theta_l_min),
+        "resonance_theta_probe_count": int(cfg.cont_resonance_theta_probe_count),
+        "resonance_theta_scan_depth": int(cfg.cont_resonance_theta_scan_depth),
+        "resonance_theta_scout_max_extra_nodes": (
+            None
+            if cfg.cont_resonance_theta_scout_max_extra_nodes is None
+            else int(cfg.cont_resonance_theta_scout_max_extra_nodes)
+        ),
+        "resonance_theta_root_tol": (
+            None
+            if cfg.cont_resonance_theta_root_tol is None
+            else float(cfg.cont_resonance_theta_root_tol)
+        ),
+        "resonance_theta_sharpness_min": float(
+            cfg.cont_resonance_theta_sharpness_min
+        ),
+        "resonance_theta_max_roots": (
+            None
+            if cfg.cont_resonance_theta_max_roots is None
+            else int(cfg.cont_resonance_theta_max_roots)
+        ),
+        "resonance_theta_refine_depth": (
+            None
+            if cfg.cont_resonance_theta_refine_depth is None
+            else int(cfg.cont_resonance_theta_refine_depth)
+        ),
         "e_max": float(e_max_value),
         "e_max_mode": str(e_max_mode),
         "e_max_occ_tol": float(cfg.cont_stage2_e_max_occ_tol),
@@ -1386,20 +2097,36 @@ def _build_continuum_params(
         "tail_match": bool(b3["mode"] == "in_scf"),
         "tail_match_target": str(b3["target"]),
         "tail_fit_points": int(b3["fit_points"]),
+        "tail_local_fit_width": b3["local_fit_width"],
+        "tail_fit_window_mode": str(b3["fit_window_mode"]),
         "tail_blend_points": int(b3["blend_points"]),
         "tail_model": str(tail_model),
         "tail_auto_rel_improve_tol": float(b3["auto_rel_improve_tol"]),
         "tail_auto_signal_rel_tol": float(b3["auto_signal_rel_tol"]),
         "tail_fallback_on_error": bool(b3["fallback_on_error"]),
         "source_closure": bool(cfg.source_closure),
-        "source_closure_when_b3": bool(cfg.full_b3_use_source_closure),
+        "source_closure_when_b3": bool(use_full_b3_source_closure),
         "source_r_trust": float(cfg.source_r_trust_frac) * solve_rmax,
         "source_blend_width": float(cfg.source_blend_frac) * solve_rmax,
         "source_r_trust_frac": float(cfg.source_r_trust_frac),
         "source_blend_frac": float(cfg.source_blend_frac),
         "source_charge_closure": bool(cfg.source_charge_closure),
+        "b3_source_charge_constraint": bool(cfg.b3_source_charge_constraint),
+        "b3_charge_constraint_fit_rms_ratio_max": (
+            None
+            if cfg.b3_charge_constraint_fit_rms_ratio_max is None
+            else float(cfg.b3_charge_constraint_fit_rms_ratio_max)
+        ),
+        "b3_charge_constraint_profile_delta_rel_max": (
+            None
+            if cfg.b3_charge_constraint_profile_delta_rel_max is None
+            else float(cfg.b3_charge_constraint_profile_delta_rel_max)
+        ),
         "ext_source_closure_when_b3": cfg.ext_b3_use_source_closure,
         "ext_source_closure_auto_rel_tol": float(cfg.ext_source_closure_auto_rel_tol),
+        "analytic_ion_sphere_background": bool(
+            _uses_analytic_ion_sphere_background(cfg, r_ws=float(r_ws), rmax=float(rmax))
+        ),
     }
     if b3["r_cut"] is not None:
         params["tail_r_cut"] = float(b3["r_cut"])
@@ -1419,6 +2146,30 @@ def _build_continuum_params(
         params["adaptive_shard_policy"] = str(cfg.cont_shard_policy)
         params["adaptive_reuse_basis"] = bool(cfg.cont_adaptive_reuse_basis)
     return params
+
+
+def _resolve_full_b3_source_closure_policy(
+    *,
+    setting: bool | None,
+    tail_target: str,
+) -> bool:
+    """
+    Resolve source closure for the central/full B3 branch.
+
+    Starrett & Saumon (2014), Appendix B, fit Eq. (B3) separately to the total
+    full and external densities.  When the selected target is ``full`` (or
+    ``both``), applying the historical continuum source closure afterwards
+    first forces ``n_cont`` to ``n0`` and then re-adds ``n_bound``.  A diffuse
+    bound tail therefore makes the potential source approach
+    ``n0 + n_bound`` rather than the already matched ``n_full -> n0``.
+
+    Auto mode consequently disables this extra closure for full-density B3,
+    while preserving it for the legacy continuum-target path.
+    """
+    if setting is not None:
+        return bool(setting)
+    target = str(tail_target).strip().lower()
+    return target not in ("full", "both")
 
 
 def _resolve_ext_source_closure_policy(
@@ -1537,9 +2288,13 @@ def _resolve_n0_mode(cfg: FullExternalConfig, *, b3_tail_mode: str) -> str:
 
     mode = str(override).strip().lower()
     if mode not in ("ideal", "window", "tail", "fixed"):
-        raise ValueError("n0_mode_override must be one of 'ideal', 'window', 'tail', or 'fixed'.")
+        raise ValueError(
+            "n0_mode_override must be one of 'ideal', 'window', 'tail', or 'fixed'."
+        )
     if mode == "fixed" and cfg.n0_fixed_override is None:
-        raise ValueError("n0_mode_override='fixed' requires n0_fixed_override to be set.")
+        raise ValueError(
+            "n0_mode_override='fixed' requires n0_fixed_override to be set."
+        )
     return mode
 
 
@@ -1558,6 +2313,8 @@ def _build_ks_config(
     compute_external: bool,
     v_full_init: np.ndarray | None = None,
     v_ext_init: np.ndarray | None = None,
+    v_corr_full: np.ndarray | None = None,
+    v_corr_ext: np.ndarray | None = None,
     scf_mix_override: float | None = None,
     scf_mixing_scheme_override: str | None = None,
     scf_mixing_m_override: int | None = None,
@@ -1579,16 +2336,17 @@ def _build_ks_config(
         else scf_mixing_scheme_override
     )
     scf_mixing_m = int(
-        cfg.scf_mixing_m
-        if scf_mixing_m_override is None
-        else scf_mixing_m_override
+        cfg.scf_mixing_m if scf_mixing_m_override is None else scf_mixing_m_override
     )
+    full_fixed_mu = None if compute_external else cfg.full_fixed_mu_ha
+    mu_mode = "fixed" if full_fixed_mu is not None else "neutral"
+    mu_value = float(full_fixed_mu) if full_fixed_mu is not None else float(mu_guess)
 
     return KSDTFConfig(
         Z=int(z_nuc),
         temperature=float(temperature_ha),
-        mu=float(mu_guess),
-        mu_mode="neutral",
+        mu=mu_value,
+        mu_mode=mu_mode,
         mu_strategy="inner",
         mu_bounds=tuple(float(x) for x in mu_bounds),
         mu_solver="brent",
@@ -1600,28 +2358,57 @@ def _build_ks_config(
         rmax=float(rmax),
         rmax_mult=None,
         n_points=int(cfg.n_points),
+        bound_rmax=(
+            None
+            if cfg.bound_rmax_mult is None
+            else max(
+                float(rmax),
+                float(cfg.bound_rmax_mult) * (float(rmax) / float(cfg.rmax_mult)),
+            )
+        ),
+        bound_zero_tail_refine=bool(cfg.bound_zero_tail_refine),
+        bound_zero_tail_min_binding=float(cfg.bound_zero_tail_min_binding_ha),
+        bound_zero_tail_max_binding=float(cfg.bound_zero_tail_max_binding_ha),
+        bound_zero_tail_scan_points=int(cfg.bound_zero_tail_scan_points),
+        bound_zero_tail_l_max=int(cfg.bound_zero_tail_l_max),
+        bound_zero_tail_edge_rel_tol=float(cfg.bound_zero_tail_edge_rel_tol),
         l_list=cfg.resolved_l_list(),
         n_states=cfg.resolved_n_states(),
         n_states_by_l=cfg.resolved_n_states_by_l(),
+        xc_model=str(cfg.xc_model),
+        gga_core_mode=str(cfg.gga_core_mode),
+        gga_core_zr=float(cfg.gga_core_zr),
         continuum_model="scattering",
         continuum_params=dict(cont_params),
         compute_external=bool(compute_external),
         mix=scf_mix,
         max_iter=int(max_iter),
         tol=float(cfg.scf_tol),
-        shift_v_eff_tail=False,
+        # PH changes the initial long-range Hartree map.  Keep every
+        # PH-enabled mixed iterate in the physical V(infinity)=0 gauge so the
+        # later ordinary-Poisson fixed point cannot inherit a screened-tail
+        # constant and manufacture a spurious threshold state.
+        shift_v_eff_tail=bool(
+            float(cfg.ph_kappa) > 0.0 and int(cfg.ph_kappa_iters) > 0
+        ),
         full_v_eff_outer_decay=bool(cfg.full_v_eff_outer_decay),
         full_v_eff_outer_decay_start_rws=float(cfg.full_v_eff_outer_decay_start_rws),
         full_v_eff_outer_decay_length_rws=float(cfg.full_v_eff_outer_decay_length_rws),
         bound_energy_cut_mode=str(cfg.bound_energy_cut_mode),
         bound_energy_cut=float(cfg.bound_energy_cut),
-        ph_kappa=0.0,
-        ph_kappa_iters=0,
+        ph_kappa=(
+            float(cfg.ph_kappa)
+            if float(cfg.ph_kappa) > 0.0 and int(cfg.ph_kappa_iters) > 0
+            else 0.0
+        ),
+        ph_kappa_iters=(
+            int(cfg.ph_kappa_iters)
+            if float(cfg.ph_kappa) > 0.0 and int(cfg.ph_kappa_iters) > 0
+            else 0
+        ),
         n0_mode=n0_mode,
         n0_fixed=(
-            float(cfg.n0_fixed_override)
-            if cfg.n0_fixed_override is not None
-            else None
+            float(cfg.n0_fixed_override) if cfg.n0_fixed_override is not None else None
         ),
         n0_window_lo_frac=0.75,
         n0_window_hi_frac=0.80,
@@ -1634,14 +2421,31 @@ def _build_ks_config(
         neutrality_mode=str(cfg.neutrality_mode),
         charge_tol=None,
         zbar_tol=None,
-        # Keep same occupation model as validated script.
-        bound_occ_mode="fd_m",
+        bound_occ_mode=str(cfg.bound_occ_mode),
         ion_cut_mode=str(cfg.ion_cut_mode),
         ion_cut_c=float(cfg.ion_cut_c),
         ion_bound_gamma=float(cfg.ion_bound_gamma),
         ion_gamma_mode=str(cfg.ion_gamma_mode),
         ion_gamma_scale=float(cfg.ion_gamma_scale),
         ion_ws_weight_min=float(cfg.ion_ws_weight_min),
+        g_ii_override=(
+            None
+            if cfg.g_ii_override is None
+            else np.asarray(cfg.g_ii_override, dtype=float)
+        ),
+        g_ii_override_r=(
+            None
+            if cfg.g_ii_override_r is None
+            else np.asarray(cfg.g_ii_override_r, dtype=float)
+        ),
+        analytic_ion_sphere_background=bool(
+            _uses_analytic_ion_sphere_background(
+                cfg, r_ws=float(r_ws), rmax=float(rmax)
+            )
+        ),
+        exact_ws_boundary_quadrature=bool(
+            _uses_decoupled_ion_sphere_grid(cfg, r_ws=float(r_ws), rmax=float(rmax))
+        ),
         verbose=bool(cfg.show_scf_progress or cfg.verbose),
         print_every=int(cfg.print_every),
         perf_diag=bool(cfg.perf_diag),
@@ -1653,6 +2457,8 @@ def _build_ks_config(
         dv_tol=float(cfg.scf_dv_tol),
         v_full_init=v_full_init,
         v_ext_init=v_ext_init,
+        v_corr_full=v_corr_full,
+        v_corr_ext=v_corr_ext,
     )
 
 
@@ -1724,6 +2530,7 @@ def _build_bound_tables_and_dos(
     energy_cut: float,
     gamma: float,
     n_jobs: int,
+    zero_tail_bound_meta: dict[str, Any] | None = None,
 ) -> dict[str, np.ndarray]:
     """
     Build bound-level tables and DOS arrays for saving/inspection.
@@ -1757,6 +2564,27 @@ def _build_bound_tables_and_dos(
     )
 
     e_mat = np.asarray(vals, dtype=float)
+    # The production SCF can replace a shallow Dirichlet-box orbital by a
+    # zero-tail matched pole, including the case where the finite box misses
+    # that pole entirely.  Reporting must use the same spectrum as n_bound;
+    # blindly rerunning only the finite-box eigensolver here otherwise saves
+    # ``inf`` and FD~0 for a state which contributed to the converged density.
+    if isinstance(zero_tail_bound_meta, dict):
+        for state in zero_tail_bound_meta.get("states", []):
+            if not isinstance(state, dict):
+                continue
+            l_value = int(state.get("l", -1))
+            state_index = int(state.get("state_index", -1))
+            l_matches = np.flatnonzero(l_arr == l_value)
+            if (
+                l_matches.size != 1
+                or state_index < 0
+                or state_index >= e_mat.shape[1]
+            ):
+                continue
+            matched_energy = float(state.get("matched_energy_ha", np.nan))
+            if np.isfinite(matched_energy) and matched_energy < 0.0:
+                e_mat[int(l_matches[0]), state_index] = matched_energy
     fd_mat = fermi_dirac(e_mat, float(mu), float(temperature_ha))
     m_mat = np.vectorize(_ion_level_weight, otypes=[float])(e_mat, float(gamma))
     fdm_mat = fd_mat * m_mat
@@ -1853,7 +2681,7 @@ def _build_scattering_continuum_dos(
         return {}
 
     e_pos = e[mask]
-    delta_pos = np.unwrap(delta[mask], axis=0)
+    delta_pos = qmod.unwrap_scattering_phases(delta[mask], axis=0)
     ddelta_dE = np.gradient(delta_pos, e_pos, axis=0, edge_order=1)
     l_arr = np.arange(delta_pos.shape[1], dtype=float)
     degeneracy = 2.0 * (2.0 * l_arr + 1.0)
@@ -1922,27 +2750,22 @@ def _print_state_summary(
 
 def _print_bound_table(title: str, matrix: np.ndarray, l_values: np.ndarray) -> None:
     """
-    Pretty-print a bound-state matrix indexed by [l, radial-state index].
-
-    For each angular channel, the first displayed state has principal quantum
-    number n = l + 1.
+    Pretty-print a bound-state matrix indexed by [l, n].
     """
     mat = np.asarray(matrix, dtype=float)
     l_arr = np.asarray(l_values, dtype=int)
     if mat.ndim != 2 or mat.shape[0] != l_arr.size:
         return
     n_states = mat.shape[1]
-    cell_width = 7
-    col_labels = ["n=l+1"] + [str(i + 1) for i in range(1, n_states)]
-    head = "     | " + " | ".join(f"{label:>{cell_width}s}" for label in col_labels)
-    sep = "-----+" + "+".join("-" * (cell_width + 2) for _ in col_labels)
+    col_labels = [f"n={i+1}" for i in range(n_states)]
+    head = "     | " + " | ".join([f"{c:>10s}" for c in col_labels])
+    sep = "-----+" + "+".join(["-" * 12 for _ in col_labels])
     print(f"\n{title}")
     print(head)
     print(sep)
     for i, l_val in enumerate(l_arr):
-        row = " | ".join(f"{mat[i, j]:{cell_width}.3f}" for j in range(n_states))
-        row_label = f"l={int(l_val)}" if i == 0 else f"{int(l_val)}"
-        print(f" {row_label:>3s} | {row}")
+        row = " | ".join([f"{mat[i, j]:10.4f}" for j in range(n_states)])
+        print(f" l={int(l_val):<2d}| {row}")
 
 
 def _external_fixed_mu_scf(
@@ -1965,6 +2788,14 @@ def _external_fixed_mu_scf(
     print_every: int,
     perf_diag: bool = False,
     perf_show_stage: bool = True,
+    ph_kappa: float = 0.0,
+    ph_kappa_iters: int = 0,
+    nuclear_charge: float = 1.0,
+    xc_model: str = "dirac",
+    gga_core_mode: str = "finite",
+    gga_core_zr: float = 0.05,
+    g_ii: np.ndarray | None = None,
+    v_corr_ext: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """
     External-only SCF loop with fixed (mu, n0).
@@ -1981,16 +2812,50 @@ def _external_fixed_mu_scf(
     b3_mode = str(ext_b3_tail_mode or "off").strip().lower()
     if b3_mode not in ("off", "in_scf"):
         raise ValueError("ext_b3_tail_mode must be 'off' or 'in_scf'.")
+    ph_kappa_use = float(ph_kappa)
+    ph_iters_use = int(ph_kappa_iters)
+    if not np.isfinite(ph_kappa_use) or ph_kappa_use < 0.0:
+        raise ValueError("ph_kappa must be finite and non-negative.")
+    if ph_iters_use < 0:
+        raise ValueError("ph_kappa_iters must be non-negative.")
+    if ph_kappa_use <= 0.0 or ph_iters_use <= 0:
+        ph_kappa_use = 0.0
+        ph_iters_use = 0
     use_b3_tail = (b3_mode == "in_scf")
+    if use_b3_tail:
+        # The external reference system has no nuclear potential and therefore
+        # no discrete bound density: its total electron density is its
+        # continuum density.  Even when the full AA branch follows Appendix B
+        # by selecting ``b3_tail_target="full"``, the external-only SCF must
+        # rebuild that density through the continuum B3 path.  Passing
+        # ``"full"`` through to `_rebuild_continuum_on_full_grid` disables the
+        # tail there and leaves an artificial step to n0 at `solve_rmax`.
+        ext_params["tail_match_target"] = "cont"
 
     continuum = _select_continuum_model("scattering")
     r_ws = float(ext_params.get("r_ws", 0.0))
-    g_ii = IonSphereStepModel(r_ws=r_ws).g_ii(r)
+    default_ion_sphere_background = (
+        g_ii is None and bool(ext_params.get("analytic_ion_sphere_background", False))
+    )
+    if g_ii is None:
+        g_ii_use = IonSphereStepModel(r_ws=r_ws).g_ii(r)
+    else:
+        g_ii_use = np.asarray(g_ii, dtype=float)
+        if g_ii_use.shape != np.asarray(r, dtype=float).shape:
+            raise ValueError("external g_ii must match the radial grid.")
     n_bound_zero = np.zeros_like(r, dtype=float)
     use_source_closure_base = bool(ext_params.get("source_closure", False))
 
     n_ext = np.full_like(r, float(n0), dtype=float)
+    n_ext_pre_tail = np.full_like(r, float(n0), dtype=float)
     v_ext = np.zeros_like(r, dtype=float)
+    if v_corr_ext is not None and np.asarray(v_corr_ext).shape != np.asarray(r).shape:
+        raise ValueError("external v_corr_ext must match the radial grid.")
+    v_corr_use = (
+        np.zeros_like(r, dtype=float)
+        if v_corr_ext is None
+        else np.asarray(v_corr_ext, dtype=float)
+    )
     current_mix = float(mix)
     prev_err = np.inf
     prev_dv = np.inf
@@ -2008,34 +2873,63 @@ def _external_fixed_mu_scf(
         "converged": False,
     }
     history: list[dict[str, Any]] = []
+    tail_meta_ext: dict[str, Any] = {
+        "applied": False,
+        "reason": "no_external_scf_iteration",
+    }
 
     for it in range(int(max_iter)):
+        in_ph_stage = bool(ph_kappa_use > 0.0 and it < ph_iters_use)
+        kappa_eff = float(ph_kappa_use) if in_ph_stage else 0.0
+        ph_mixer_reset = bool(
+            ph_kappa_use > 0.0
+            and ph_iters_use > 0
+            and it == ph_iters_use
+        )
+        if ph_mixer_reset:
+            # Eyert/Anderson secant vectors from the screened map do not
+            # approximate the Jacobian of the final ordinary-Poisson map.
+            dx_hist.clear()
+            df_hist.clear()
+            x_prev = None
+            f_prev = None
+            # The adaptive linear-mixing controller also compares consecutive
+            # map errors.  Screened and unscreened residuals are not
+            # commensurate, so do not let the first physical Poisson step
+            # inherit a reduced mixing factor or stale trend information.
+            current_mix = float(mix)
+            prev_err = np.inf
+            prev_dv = np.inf
         perf: dict[str, float] = {}
         t_iter = time.perf_counter() if perf_diag else 0.0
         t_stage = t_iter
         n_prev = n_ext.copy()
         v_prev = v_ext.copy()
-        tail_meta_ext: dict[str, Any] = {"applied": False, "reason": "tail_disabled"}
-        source_closure_meta: dict[str, Any] = {"mode": "disabled"}
+        tail_meta_ext = {"applied": False, "reason": "tail_disabled"}
+        b3_charge_constraint_applied = False
+        b3_tail_active_this_iter = bool(use_b3_tail)
+        use_source_closure = bool(use_source_closure_base)
+        source_closure_meta: dict[str, Any] = {"mode": "enabled" if use_source_closure else "disabled"}
 
         # 1) Evaluate external continuum density at current V_ext.
         params_iter = dict(ext_params)
         params_iter["v_eff"] = v_ext
         params_iter = _apply_external_energy_floor(params_iter, r, v_ext)
         params_iter["v_eff"] = v_ext
-        if use_b3_tail:
+        if b3_tail_active_this_iter:
             cont_solve_end = _continuum_prefix_length(r, params_iter.get("solve_rmax", None))
             r_eval = r[:cont_solve_end]
             v_eval = v_ext[:cont_solve_end]
             params_eval = dict(params_iter)
             params_eval["v_eff"] = v_eval
+            params_eval["tail_match"] = False
             n_ext_eval = continuum.density(r_eval, float(mu), float(temperature_ha), params=params_eval)
             try:
-                n_ext_raw, _, tail_meta_ext = _rebuild_continuum_on_full_grid(
+                n_ext_raw, n_ext_pre_tail, tail_meta_ext = _rebuild_continuum_on_full_grid(
                     r,
                     n_ext_eval,
                     idx_eval_end=cont_solve_end,
-                    params=params_eval,
+                    params=params_iter,
                     n0=float(n0),
                     mu_id=float(mu),
                     temperature=float(temperature_ha),
@@ -2045,12 +2939,52 @@ def _external_fixed_mu_scf(
                 # the source entering V_ext unless the user explicitly asks to
                 # keep source_closure active with B3.
                 n_ext_new = np.asarray(n_ext_raw, dtype=float)
-            except Exception:
+                if bool(params_iter.get("b3_source_charge_constraint", False)):
+                    electron_target_ext = _source_electron_charge_target(
+                        r,
+                        float(n0),
+                        g_ii_use,
+                        0.0,
+                        ion_sphere_radius=(
+                            r_ws if default_ion_sphere_background else None
+                        ),
+                    )
+                    n_ext_new, tail_meta_ext = _apply_charge_constrained_b3_tail(
+                        r,
+                        n_ext_pre_tail,
+                        n0=float(n0),
+                        mu_id=float(mu),
+                        temperature=float(temperature_ha),
+                        params=params_iter,
+                        electron_charge_target=float(electron_target_ext),
+                    )
+                    tail_meta_ext = {
+                        **dict(tail_meta_ext),
+                        "target": "external",
+                        "source_charge_target": 0.0,
+                    }
+                    b3_charge_constraint_applied = True
+            except Exception as exc:
+                tail_meta_ext = {
+                    **dict(tail_meta_ext),
+                    "applied": False,
+                    "charge_constraint_requested": bool(
+                        params_iter.get("b3_source_charge_constraint", False)
+                    ),
+                    "charge_constraint_applied": False,
+                    "charge_constraint_accepted": False,
+                    "charge_constraint_failure_reason": str(exc),
+                    "failure_reason": str(exc),
+                }
                 if not bool(params_iter.get("tail_fallback_on_error", True)):
                     raise
-                use_b3_tail = False
-        if not use_b3_tail:
+                # Fall back for this iteration only.  A transient bad fit must
+                # not silently and permanently disable B3 for the remainder
+                # of the external SCF.
+                b3_tail_active_this_iter = False
+        if not b3_tail_active_this_iter:
             n_ext_raw = continuum.density(r, float(mu), float(temperature_ha), params=params_iter)
+            n_ext_pre_tail = np.asarray(n_ext_raw, dtype=float)
 
             # 2) Trusted-region closure and (optional) source-charge closure.
             r_trust = float(
@@ -2072,11 +3006,16 @@ def _external_fixed_mu_scf(
                     n_bound_zero,
                     n_ext_new,
                     float(n0),
-                    g_ii,
+                    g_ii_use,
                     0.0,
                     float(r_trust),
+                    ion_sphere_radius=(r_ws if default_ion_sphere_background else None),
                 )
                 n_ext_new = np.maximum(n_ext_new, 0.0)
+                source_closure_meta = {
+                    **dict(source_closure_meta),
+                    "charge_closure_applied": True,
+                }
         else:
             r_trust = float(
                 params_iter.get(
@@ -2090,8 +3029,7 @@ def _external_fixed_mu_scf(
                     float(params_iter.get("source_blend_frac", 0.03)) * float(r[-1]),
                 )
             )
-            use_source_closure = bool(use_source_closure_base)
-            if use_b3_tail:
+            if b3_tail_active_this_iter:
                 use_source_closure, source_closure_meta = _resolve_ext_source_closure_policy(
                     setting=params_iter.get("ext_source_closure_when_b3", None),
                     r=r,
@@ -2107,7 +3045,15 @@ def _external_fixed_mu_scf(
             elif not use_source_closure:
                 source_closure_meta = {"mode": "disabled"}
 
-            if use_source_closure:
+            if b3_charge_constraint_applied:
+                use_source_closure = False
+                source_closure_meta = {
+                    "mode": "b3_exact_integral_constraint",
+                    "applied": True,
+                    "uniform_outer_correction_applied": False,
+                    "source_charge_target": 0.0,
+                }
+            elif use_source_closure:
                 n_ext_new = _close_to_n0(r, n_ext_new, float(n0), r_trust, blend_w)
                 if bool(params_iter.get("source_charge_closure", False)):
                     n_ext_new, charge_meta = _enforce_source_charge_closure(
@@ -2115,9 +3061,10 @@ def _external_fixed_mu_scf(
                         n_bound_zero,
                         n_ext_new,
                         float(n0),
-                        g_ii,
+                        g_ii_use,
                         0.0,
                         float(r_trust),
+                        ion_sphere_radius=(r_ws if default_ion_sphere_background else None),
                     )
                     source_closure_meta = {
                         **dict(source_closure_meta),
@@ -2133,7 +3080,19 @@ def _external_fixed_mu_scf(
             t_stage = time.perf_counter()
 
         # 3) Rebuild V_ext and remove finite-box gauge.
-        v_new = effective_potential_external(r, n_ext_new, float(n0), g_ii)
+        v_new = effective_potential_external(
+            r,
+            n_ext_new,
+            float(n0),
+            g_ii_use,
+            xc_model=xc_model,
+            kappa=kappa_eff,
+            ion_sphere_radius=(r_ws if default_ion_sphere_background else None),
+            nuclear_charge=float(nuclear_charge),
+            gga_core_mode=gga_core_mode,
+            gga_core_zr=gga_core_zr,
+        )
+        v_new = v_new + v_corr_use
         v_new = v_new - _tail_shift_value(r, v_new, frac=0.05)
         if perf_diag:
             perf["closure"] = time.perf_counter() - t_stage
@@ -2156,10 +3115,12 @@ def _external_fixed_mu_scf(
                 b_vec = np.zeros(hist_len, dtype=float)
                 for i in range(hist_len):
                     for j in range(hist_len):
-                        a_mat[i, j] = float(np.trapezoid(df_hist[i] * df_hist[j], r))
+                        a_mat[i, j] = trapz_integral(
+                            df_hist[i] * df_hist[j], r
+                        )
                         if i == j:
                             a_mat[i, j] += w0**2
-                    b_vec[i] = float(np.trapezoid(df_hist[i] * f_now, r))
+                    b_vec[i] = trapz_integral(df_hist[i] * f_now, r)
                 try:
                     w_vec = np.linalg.solve(a_mat, b_vec)
                 except np.linalg.LinAlgError:
@@ -2192,8 +3153,12 @@ def _external_fixed_mu_scf(
         # Only V_ext is mixed in the external fixed-mu loop. The density is
         # rebuilt directly from the current potential, so dn_rel can plateau to
         # machine zero before the mixed potential has fully settled.
-        dn_rel = float(np.trapezoid(np.abs(n_ext - n_prev), r)) / max(float(np.trapezoid(np.abs(n_prev), r)), 1e-12)
-        dv_rel = float(np.trapezoid(np.abs(v_ext - v_prev), r)) / max(float(np.trapezoid(np.abs(v_prev), r)), 1e-12)
+        dn_rel = trapz_integral(np.abs(n_ext - n_prev), r) / max(
+            trapz_integral(np.abs(n_prev), r), 1e-12
+        )
+        dv_rel = trapz_integral(np.abs(v_ext - v_prev), r) / max(
+            trapz_integral(np.abs(v_prev), r), 1e-12
+        )
         if perf_diag:
             perf["metrics"] = time.perf_counter() - t_stage
             perf["total"] = time.perf_counter() - t_iter
@@ -2202,6 +3167,7 @@ def _external_fixed_mu_scf(
             print(
                 f"  [ext] it={it:2d}  dn_rel={dn_rel:.3e}  dv_rel={dv_rel:.3e}  "
                 f"err={err:.3e}  mix={current_mix:.3f}  scheme={scheme}  "
+                f"kappa={kappa_eff:.3e} Bohr^-1  "
                 f"cont_e_max={float(ext_params.get('e_max', np.nan)):.6f} Ha"
             )
             tail_model_req = str(tail_meta_ext.get("model_requested", "")).strip().lower()
@@ -2234,8 +3200,35 @@ def _external_fixed_mu_scf(
             "cont_e_max": float(ext_params.get("e_max", np.nan)),
             "mix": float(current_mix),
             "scheme": str(scheme),
+            "ph_kappa": float(kappa_eff),
+            "in_ph_stage": bool(in_ph_stage),
+            "ph_mixer_reset": bool(ph_mixer_reset),
             "n_ext_tail_model_requested": str(tail_meta_ext.get("model_requested", "")),
             "n_ext_tail_model_selected": str(tail_meta_ext.get("model_selected", "")),
+            "n_ext_tail_charge_constraint_requested": bool(
+                tail_meta_ext.get("charge_constraint_requested", False)
+            ),
+            "n_ext_tail_charge_constraint_applied": bool(
+                tail_meta_ext.get("charge_constraint_applied", False)
+            ),
+            "n_ext_tail_charge_constraint_residual": float(
+                tail_meta_ext.get("charge_constraint_residual", np.nan)
+            ),
+            "n_ext_tail_charge_constraint_fit_rms_ratio": float(
+                tail_meta_ext.get("charge_constraint_fit_rms_ratio", np.nan)
+            ),
+            "n_ext_tail_charge_constraint_coeff_delta_rel": float(
+                tail_meta_ext.get("charge_constraint_coeff_delta_rel", np.nan)
+            ),
+            "n_ext_tail_charge_constraint_profile_delta_rel": float(
+                tail_meta_ext.get("charge_constraint_profile_delta_rel", np.nan)
+            ),
+            "n_ext_tail_charge_constraint_min_density": float(
+                tail_meta_ext.get("charge_constraint_tail_min", np.nan)
+            ),
+            "n_ext_tail_charge_constraint_failure_reason": str(
+                tail_meta_ext.get("charge_constraint_failure_reason", "")
+            ),
             "ext_source_closure_mode": str(source_closure_meta.get("mode", "")),
             "ext_source_closure_applied": bool(source_closure_meta.get("applied", use_source_closure_base)),
             "ext_source_closure_rel_dev_max": float(source_closure_meta.get("rel_dev_max", np.nan)),
@@ -2252,8 +3245,33 @@ def _external_fixed_mu_scf(
             "perf": perf if perf_diag else None,
         })
 
-        if dn_rel < float(dn_tol) and dv_rel < float(dv_tol):
-            status = {"iters": it + 1, "err": err, "converged": True, "history": history}
+        # Poisson-Helmholtz is only a preconditioner. Even if the screened map
+        # appears converged, require at least one ordinary Poisson update
+        # before accepting the external fixed point.
+        b3_constraint_required = bool(
+            use_b3_tail
+            and params_iter.get("b3_source_charge_constraint", False)
+        )
+        b3_constraint_ok = bool(
+            (not b3_constraint_required) or b3_charge_constraint_applied
+        )
+        if (
+            (not in_ph_stage)
+            and b3_constraint_ok
+            and dn_rel < float(dn_tol)
+            and dv_rel < float(dv_tol)
+        ):
+            status = {
+                "iters": it + 1,
+                "err": err,
+                "converged": True,
+                "history": history,
+                "ph_kappa": float(ph_kappa_use),
+                "ph_kappa_iters": int(ph_iters_use),
+                "final_ph_kappa": float(kappa_eff),
+                "tail_meta": dict(tail_meta_ext),
+                "n_ext_pre_tail": np.asarray(n_ext_pre_tail, dtype=float),
+            }
             return n_ext, v_ext, status
 
         if adaptive_mix:
@@ -2264,7 +3282,19 @@ def _external_fixed_mu_scf(
         prev_err = err
         prev_dv = dv_rel
 
-    status = {"iters": int(max_iter), "err": float(prev_err), "converged": False, "history": history}
+    status = {
+        "iters": int(max_iter),
+        "err": float(prev_err),
+        "converged": False,
+        "history": history,
+        "ph_kappa": float(ph_kappa_use),
+        "ph_kappa_iters": int(ph_iters_use),
+        "final_ph_kappa": (
+            float(history[-1]["ph_kappa"]) if history else 0.0
+        ),
+        "tail_meta": dict(tail_meta_ext),
+        "n_ext_pre_tail": np.asarray(n_ext_pre_tail, dtype=float),
+    }
     return n_ext, v_ext, status
 
 
@@ -2280,6 +3310,62 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         - metadata ("meta"),
         - optional save paths ("saved_paths") when cfg.save_data=True.
     """
+    if str(cfg.electronic_model).strip().lower() == "tf":
+        # Import lazily so the mature orbital path keeps its historical import
+        # graph and startup behavior.  The TF result implements the same
+        # full/external pseudoatom payload consumed below by QOZ/HNC.
+        from otter.electronic.thomas_fermi import (
+            ThomasFermiConfig,
+            solve_thomas_fermi_full_then_external,
+        )
+
+        return solve_thomas_fermi_full_then_external(
+            ThomasFermiConfig(
+                element=cfg.element,
+                temperature_ev=float(cfg.temperature_ev),
+                rho_g_cc=float(cfg.rho_g_cc),
+                xc_model=str(cfg.xc_model),
+                gga_core_mode=str(cfg.gga_core_mode),
+                gga_core_zr=float(cfg.gga_core_zr),
+                r_ws_override_bohr=cfg.r_ws_override_bohr,
+                n_i_override_bohr3=cfg.n_i_override_bohr3,
+                run_mode=str(cfg.run_mode),
+                rmax_mult=float(cfg.rmax_mult),
+                n_points=int(cfg.n_points),
+                mix=float(cfg.tf_scf_mix),
+                mixing_history=int(cfg.tf_scf_mixing_m),
+                mixing_regularization=float(cfg.tf_scf_mixing_w0),
+                max_iter=int(cfg.tf_scf_max_iter),
+                tol=float(cfg.tf_scf_tol),
+                polish_tol=float(cfg.tf_polish_tol),
+                polish_max_iter=int(cfg.tf_polish_max_iter),
+                mu_tol=float(cfg.tf_mu_tol),
+                mu_bounds=(
+                    float(cfg.mu_bounds[0]),
+                    float(cfg.mu_bounds[1]),
+                ),
+                mu_guess_zbar=float(cfg.mu_guess_zbar),
+                ion_cut_c=float(cfg.ion_cut_c),
+                quadrature_order=int(cfg.tf_quadrature_order),
+                show_progress=bool(cfg.show_scf_progress),
+                verbose=bool(cfg.verbose),
+                v_full_init=cfg.v_full_init,
+                v_full_init_r=cfg.v_full_init_r,
+                v_ext_init=cfg.v_ext_init,
+                v_ext_init_r=cfg.v_ext_init_r,
+                full_fixed_mu_ha=cfg.full_fixed_mu_ha,
+                g_ii_override=cfg.g_ii_override,
+                g_ii_override_r=cfg.g_ii_override_r,
+                v_corr_full=cfg.v_corr_full,
+                v_corr_full_r=cfg.v_corr_full_r,
+                v_corr_ext=cfg.v_corr_ext,
+                v_corr_ext_r=cfg.v_corr_ext_r,
+                save_data=bool(cfg.save_data),
+                save_output_dir=cfg.save_output_dir,
+                save_suffix=str(cfg.save_suffix),
+            )
+        )
+
     elem = element_info(cfg.element)
     z_nuc = int(elem.z)
     symbol = str(elem.symbol)
@@ -2301,6 +3387,18 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         source_r=cfg.v_ext_init_r,
         target_r=r_target,
         name="v_ext_init",
+    )
+    v_corr_full, v_corr_full_meta = _resample_initial_potential(
+        values=cfg.v_corr_full,
+        source_r=cfg.v_corr_full_r,
+        target_r=r_target,
+        name="v_corr_full",
+    )
+    v_corr_ext, v_corr_ext_meta = _resample_initial_potential(
+        values=cfg.v_corr_ext,
+        source_r=cfg.v_corr_ext_r,
+        target_r=r_target,
+        name="v_corr_ext",
     )
     mu_guess = mu_guess_from_density(n_i, zbar=float(cfg.mu_guess_zbar))
 
@@ -2378,6 +3476,8 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             compute_external=False,
             v_full_init=None if v_full_init is None else v_full_init.copy(),
             v_ext_init=None if v_ext_init is None else v_ext_init.copy(),
+            v_corr_full=None if v_corr_full is None else v_corr_full.copy(),
+            v_corr_ext=None if v_corr_ext is None else v_corr_ext.copy(),
         )
         stage1_local = solve_ks_dft_is(cfg1_local)
         return _apply_b3_post_to_full_result(
@@ -2480,6 +3580,8 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
                 if use_stage2_continuation_init
                 else np.asarray(stage1["v_full"], dtype=float)
             ),
+            v_corr_full=None if v_corr_full is None else np.asarray(v_corr_full, dtype=float),
+            v_corr_ext=None if v_corr_ext is None else np.asarray(v_corr_ext, dtype=float),
             scf_mix_override=stage2_mixer_mix,
             scf_mixing_scheme_override=stage2_mixer_scheme,
             scf_mixing_m_override=stage2_mixer_m,
@@ -2571,6 +3673,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         ext_params["r_ws"] = float(full["r_ws"])
         n_ext_fix, v_ext_fix, ext_status = _external_fixed_mu_scf(
             r=r_full,
+            g_ii=np.asarray(full["g_ii"], dtype=float),
             mu=mu_fix,
             temperature_ha=temperature_ha,
             n0=n0_fix,
@@ -2588,13 +3691,32 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             print_every=int(cfg.print_every),
             perf_diag=bool(cfg.perf_diag),
             perf_show_stage=bool(cfg.perf_show_stage),
+            ph_kappa=float(cfg.ph_kappa),
+            ph_kappa_iters=int(cfg.ph_kappa_iters),
+            nuclear_charge=float(z_nuc),
+            xc_model=str(cfg.xc_model),
+            gga_core_mode=str(cfg.gga_core_mode),
+            gga_core_zr=float(cfg.gga_core_zr),
+            v_corr_ext=None if v_corr_ext is None else np.asarray(v_corr_ext, dtype=float),
         )
         result["n_ext"] = np.asarray(n_ext_fix, dtype=float)
+        result["n_ext_pre_tail"] = np.asarray(
+            ext_status.get("n_ext_pre_tail", n_ext_fix),
+            dtype=float,
+        )
         result["v_ext"] = np.asarray(v_ext_fix, dtype=float)
         result["n_pa"] = np.asarray(result["n_full"], dtype=float) - result["n_ext"]
         result["n_scr"] = result["n_pa"] - np.asarray(result["n_ion"], dtype=float)
         result["ext_status"] = dict(ext_status)
         result["ext_history"] = list(ext_status.get("history", []))
+        result["n_ext_tail_meta"] = dict(
+            ext_status.get("tail_meta", {})
+        )
+        result["b3_charge_constraint_ext_applied"] = bool(
+            result["n_ext_tail_meta"].get(
+                "charge_constraint_applied", False
+            )
+        )
         result["perf_summary_ext"] = _summarize_history_perf(result["ext_history"])
         result["stage2_cont_e_max_final"] = float(stage2_e_max_final)
     else:
@@ -2615,16 +3737,86 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     # Potential decomposition arrays requested by downstream storage.
     r = np.asarray(result["r"], dtype=float)
     n_full = np.asarray(result["n_full"], dtype=float)
+    potential_source_key = (
+        "n_full_source" if "n_full_source" in result else "n_full"
+    )
+    n_potential_source = np.asarray(result[potential_source_key], dtype=float)
     n0 = float(result["n0"])
     g_ii = np.asarray(result["g_ii"], dtype=float)
     n0_arr = np.full_like(r, n0)
-    rho_source = n_full - n0_arr * g_ii
-    v_h = spherical_hartree_potential(r, rho_source)
-    v_xc = lda_xc_potential(n_full, model="dirac") - lda_xc_potential(n0_arr, model="dirac")
+    use_analytic_background = _uses_analytic_ion_sphere_background(
+        cfg,
+        r_ws=float(result["r_ws"]),
+        rmax=float(r[-1]),
+    )
+    if use_analytic_background:
+        v_h = spherical_hartree_potential(
+            r, n_potential_source
+        ) + _ion_sphere_background_hartree(
+            r,
+            n0=n0,
+            r_ws=float(result["r_ws"]),
+        )
+    else:
+        rho_source = n_potential_source - n0_arr * g_ii
+        v_h = spherical_hartree_potential(r, rho_source)
+    gga_core_radius = resolve_gga_core_radius(
+        cfg.xc_model,
+        nuclear_charge=float(z_nuc),
+        mode=cfg.gga_core_mode,
+        core_zr=cfg.gga_core_zr,
+        r=r,
+    )
+    v_xc = xc_potential(
+        n_potential_source,
+        model=cfg.xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    ) - xc_potential(
+        n0_arr,
+        model=cfg.xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    )
     result["v_H"] = v_h
     result["v_xc"] = v_xc
+    core_diagnostics = radial_core_diagnostics(
+        r,
+        n_potential_source,
+        v_xc,
+        nuclear_charge=float(z_nuc),
+        core_radius_bohr=gga_core_radius,
+    )
+    result["gga_core_mode"] = str(cfg.gga_core_mode)
+    result["gga_core_zr"] = float(cfg.gga_core_zr)
+    result["gga_core_radius_bohr"] = (
+        float(gga_core_radius) if gga_core_radius is not None else np.nan
+    )
+    result["gga_core_points"] = int(core_diagnostics["core_points"])
+    result["gga_radial_operator"] = "sqrt-grid-discrete-adjoint-v1"
+    result["density_cusp_rel_error"] = float(
+        core_diagnostics["density_cusp_rel_error"]
+    )
+    result["v_xc_core_turn_count"] = int(
+        core_diagnostics["potential_turn_count"]
+    )
+    result["v_xc_core_max_abs_ha"] = float(
+        core_diagnostics["max_abs_potential_ha"]
+    )
+    # Keep Libxc software/version/functional references separate from Otter's
+    # finite-core provenance.  See https://libxc.gitlab.io/#citing-libxc.
+    result["xc_provenance"] = xc_provenance(cfg.xc_model)
     result["v_scf"] = np.asarray(result["v_full"], dtype=float)
-    result["n0_ideal"] = float(ideal_unbound_density(float(result["mu"]), float(temperature_ha)))
+    result["v_decomposition_source_density"] = str(potential_source_key)
+    result["v_decomposition_source_provenance"] = str(
+        result.get(
+            "n_full_source_provenance",
+            "reported_density" if potential_source_key == "n_full" else "unknown",
+        )
+    )
+    result["n0_ideal"] = float(
+        ideal_unbound_density(float(result["mu"]), float(temperature_ha))
+    )
 
     energy_cut = _bound_energy_cut_value(
         r=r,
@@ -2634,9 +3826,13 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         value=float(cfg.bound_energy_cut),
     )
     final_ion_gamma = _final_ion_gamma_for_reporting(result, cfg)
+    r_bound_diag = np.asarray(result.get("r_bound", r), dtype=float)
+    v_full_diag = np.asarray(result["v_full"], dtype=float)
+    if r_bound_diag.shape != r.shape or not np.allclose(r_bound_diag, r):
+        v_full_diag = np.interp(r_bound_diag, r, v_full_diag, right=0.0)
     bound_diag = _build_bound_tables_and_dos(
-        r=r,
-        v_full=np.asarray(result["v_full"], dtype=float),
+        r=r_bound_diag,
+        v_full=v_full_diag,
         l_list=cfg.resolved_l_list(),
         n_states=cfg.resolved_n_states_by_l(),
         mu=float(result["mu"]),
@@ -2644,8 +3840,43 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         energy_cut=float(energy_cut),
         gamma=float(final_ion_gamma),
         n_jobs=int(max(cfg.bound_table_n_jobs, 1)),
+        zero_tail_bound_meta=result.get("zero_tail_bound_meta", None),
     )
     result.update(bound_diag)
+    # Source closure may deliberately use a tail-corrected density only for
+    # assembling V_eff while preserving the physical/output n_full profile.
+    # The final-refresh branch stores a fixed-point source candidate associated
+    # with the returned potential, rather than claiming that the last mixed
+    # potential was generated from that density exactly.
+    veff_source_density_key = (
+        "n_full_source" if "n_full_source" in result else "n_full"
+    )
+    veff_asymptotic_diag = _compute_veff_asymptotic_diagnostics(
+        r=r,
+        v_eff=np.asarray(result["v_full"], dtype=float),
+        n_full=np.asarray(result[veff_source_density_key], dtype=float),
+        n0=n0,
+        g_ii=g_ii,
+        z_nuc=float(z_nuc),
+        r_ws=float(result["r_ws"]),
+        shallowest_bound_energy_ha=float(
+            result.get("shallowest_bound_energy_ha", np.nan)
+        ),
+        analytic_ion_sphere_background=bool(use_analytic_background),
+        absolute_tail_tolerance_ha=float(cfg.veff_asymptotic_abs_tol_ha),
+    )
+    veff_asymptotic_diag["veff_asymptotic_source_density"] = (
+        veff_source_density_key
+    )
+    veff_asymptotic_diag["veff_asymptotic_source_provenance"] = str(
+        result.get(
+            "n_full_source_provenance",
+            "reported_density"
+            if veff_source_density_key == "n_full"
+            else "unknown",
+        )
+    )
+    result.update(veff_asymptotic_diag)
     result.update(
         _build_scattering_continuum_dos(
             energy_ha=np.asarray(result.get("cont_phase_energy_ha", []), dtype=float),
@@ -2672,19 +3903,75 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     # for direct inspection and for lightweight post-processing of saved
     # NPZ files, so we compute them once here and store them explicitly.
     n_ion = np.asarray(result["n_ion"], dtype=float)
-    q_full_ws = _ws_charge(r, np.asarray(result["n_full"], dtype=float), float(result["r_ws"]))
-    q_cont_ws = _ws_charge(r, np.asarray(result["n_cont"], dtype=float), float(result["r_ws"]))
-    q_ion_ws = _ws_charge(r, n_ion, float(result["r_ws"]))
+    exact_ws_boundary = _uses_decoupled_ion_sphere_grid(
+        cfg,
+        r_ws=float(result["r_ws"]),
+        rmax=float(r[-1]),
+    )
+    q_full_ws = _ws_charge(
+        r, np.asarray(result["n_full"], dtype=float), float(result["r_ws"]),
+        interpolate_boundary=exact_ws_boundary,
+    )
+    n_free_ws_profile = np.asarray(
+        result.get("n_free", result["n_cont"]),
+        dtype=float,
+    )
+    ws_mask = r <= float(result["r_ws"])
+    if not np.all(np.isfinite(n_free_ws_profile[ws_mask])):
+        raise RuntimeError(
+            "The direct Eq. (A3) continuum domain does not cover the WS sphere; "
+            "q_cont_ws cannot be evaluated from positive-energy states."
+        )
+    q_cont_ws = _ws_charge(
+        r, n_free_ws_profile, float(result["r_ws"]),
+        interpolate_boundary=exact_ws_boundary,
+    )
+    q_ion_ws = _ws_charge(
+        r, n_ion, float(result["r_ws"]),
+        interpolate_boundary=exact_ws_boundary,
+    )
+    bound_q_ion_ws = np.asarray(
+        result.get("bound_q_ion_ws", np.empty((0, 0))),
+        dtype=float,
+    )
+    bound_q_ion_ws_sum = (
+        float(np.nansum(bound_q_ion_ws)) if bound_q_ion_ws.size else np.nan
+    )
+    bound_q_ion_ws_closure_residual = (
+        float(bound_q_ion_ws_sum - q_ion_ws)
+        if np.isfinite(bound_q_ion_ws_sum)
+        else np.nan
+    )
     q_ext_ws = (
-        _ws_charge(r, np.asarray(result["n_ext"], dtype=float), float(result["r_ws"]))
+        _ws_charge(
+            r, np.asarray(result["n_ext"], dtype=float), float(result["r_ws"]),
+            interpolate_boundary=exact_ws_boundary,
+        )
         if "n_ext" in result
         else np.nan
     )
     zbar_ws = float(z_nuc) - q_ion_ws
+    q_ion_all = 4.0 * np.pi * trapz_integral((r**2) * n_ion, r)
+    zbar_partition = float(z_nuc) - float(q_ion_all)
     result["q_full_ws"] = float(q_full_ws)
     result["q_cont_ws"] = float(q_cont_ws)
+    result["q_cont_ws_definition"] = "integral-of-n_free-Eq-A3-within-Rws"
     result["q_ion_ws"] = q_ion_ws
+    result["bound_q_ion_ws_sum"] = bound_q_ion_ws_sum
+    result["bound_q_ion_ws_closure_residual"] = (
+        bound_q_ion_ws_closure_residual
+    )
+    result["bound_q_ion_ws_definition"] = (
+        "2(2l+1) f_FD(E_nl) M(E_nl) integral_0^Rws "
+        "f_cut(r) |P_nl(r)|^2 dr"
+    )
+    result["q_ion_all"] = float(q_ion_all)
     result["q_ext_ws"] = float(q_ext_ws) if np.isfinite(q_ext_ws) else np.nan
+    result["zbar_ws"] = float(zbar_ws)
+    result["zbar_partition"] = float(zbar_partition)
+    # Backward-compatible AA diagnostic.  The downstream QOZ workflow keeps
+    # this separate from the TCP charge defined by integral(n_scr), following
+    # Starrett & Saumon (2014), Eqs. (9), (10), and (15).
     result["zbar"] = zbar_ws
 
     full_controls = _resolve_b3_tail_controls(
@@ -2707,14 +3994,19 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             raise ValueError("screening_tail_repair_mode must be 'off' or 'constrained_b3'.")
         if screening_mode == "constrained_b3":
             n_scr_raw = np.asarray(result["n_scr"], dtype=float)
-            q_scr_box_raw = 4.0 * np.pi * float(np.trapezoid((r**2) * n_scr_raw, r))
-            q_scr_rel_raw = abs(float(q_scr_box_raw) - float(zbar_ws)) / max(abs(float(zbar_ws)), 1.0e-12)
+            q_scr_box_raw = (
+                4.0 * np.pi * trapz_integral((r**2) * n_scr_raw, r)
+            )
+            q_scr_rel_raw = abs(float(q_scr_box_raw) - float(zbar_partition)) / max(
+                abs(float(zbar_partition)), 1.0e-12
+            )
             screening_meta = {
                 "mode": "constrained_b3",
                 "applied": False,
                 "q_scr_raw": float(q_scr_box_raw),
                 "q_scr_rel_raw": float(q_scr_rel_raw),
-                "q_scr_target": float(zbar_ws),
+                "q_scr_target": float(zbar_partition),
+                "q_scr_target_source": "Z_minus_Qion_all",
             }
             if q_scr_rel_raw > float(cfg.screening_tail_repair_rel_tol):
                 repair_r_cut = None
@@ -2738,17 +4030,32 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
                         n_scr_fixed, screening_meta = _repair_screening_density_tail(
                             r,
                             n_scr_raw,
-                            zbar=float(zbar_ws),
+                            zbar=float(zbar_partition),
                             mu_id=float(result["mu"]),
                             temperature=float(temperature_ha),
                             r_cut=float(repair_r_cut),
                             r_fit_max=None if repair_r_fit_max is None else float(repair_r_fit_max),
                             charge_weight=float(cfg.screening_tail_charge_weight),
                         )
-                        result["n_scr_raw"] = np.asarray(n_scr_raw, dtype=float)
-                        result["n_pa_raw"] = np.asarray(result["n_pa"], dtype=float)
-                        result["n_scr"] = np.asarray(n_scr_fixed, dtype=float)
-                        result["n_pa"] = np.asarray(result["n_scr"], dtype=float) + n_ion
+                        # Keep the defining pseudoatom identities canonical
+                        # (Starrett & Saumon 2014, Eqs. 9-10):
+                        #
+                        #   n_pa  = n_full - n_ext
+                        #   n_scr = n_pa - n_ion.
+                        #
+                        # The constrained B3 fit is useful for diagnosing how
+                        # much outer-tail charge would be needed, but replacing
+                        # n_scr alone breaks those identities and can create a
+                        # spurious low-k QOZ/HNC instability.  Store it under
+                        # explicit diagnostic names instead.
+                        result["n_scr_repaired"] = np.asarray(n_scr_fixed, dtype=float)
+                        result["n_pa_repaired"] = (
+                            np.asarray(n_scr_fixed, dtype=float) + n_ion
+                        )
+                        screening_meta["q_scr_target_source"] = "Z_minus_Qion_all"
+                        screening_meta["diagnostic_only"] = True
+                        screening_meta["canonical_profiles_preserved"] = True
+                        screening_meta["used_for_qoz"] = False
                     except Exception as exc:
                         screening_meta = {
                             **screening_meta,
@@ -2761,9 +4068,67 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
                         "applied": False,
                         "error": "missing r_cut",
                     }
+    if "n_scr" in result:
+        q_scr_all = 4.0 * np.pi * trapz_integral(
+            (r**2) * np.asarray(result["n_scr"], dtype=float), r
+        )
+        result["q_scr_all"] = float(q_scr_all)
+    if "n_pa" in result:
+        q_pa_all = 4.0 * np.pi * trapz_integral(
+            (r**2) * np.asarray(result["n_pa"], dtype=float), r
+        )
+        result["q_pa_all"] = float(q_pa_all)
+        result["pa_charge_residual"] = float(q_pa_all - float(z_nuc))
     result["screening_tail_repair"] = dict(screening_meta)
 
     stage2_mixer_scheme, stage2_mixer_m, stage2_mixer_mix = _stage2_mixer_values()
+    zero_tail_states = result.get("zero_tail_bound_meta", {}).get("states", [])
+    zero_tail_state = dict(zero_tail_states[0]) if zero_tail_states else {}
+    ph_enabled = bool(float(cfg.ph_kappa) > 0.0 and int(cfg.ph_kappa_iters) > 0)
+    stage2_update_count = int(result.get("stage2_iters", 0))
+    stage2_final_ph_kappa = float(
+        result.get(
+            "final_ph_kappa",
+            (
+                float(cfg.ph_kappa)
+                if ph_enabled
+                and stage2_update_count > 0
+                and stage2_update_count <= int(cfg.ph_kappa_iters)
+                else 0.0
+            ),
+        )
+    )
+    ext_final_ph_kappa = float(
+        result.get("ext_status", {}).get("final_ph_kappa", 0.0)
+    )
+    final_ph_kappa = max(stage2_final_ph_kappa, ext_final_ph_kappa)
+    if bool(result.get("stage2_converged", False)) and stage2_final_ph_kappa > 0.0:
+        raise RuntimeError(
+            "Internal error: stage-2 SCF was accepted before an unscreened "
+            "Poisson update after Poisson-Helmholtz preconditioning."
+        )
+    if bool(result.get("ext_status", {}).get("converged", False)) and ext_final_ph_kappa > 0.0:
+        raise RuntimeError(
+            "Internal error: external SCF was accepted before an unscreened "
+            "Poisson update after Poisson-Helmholtz preconditioning."
+        )
+
+    final_tail_target = str(full_controls["target"])
+    if final_tail_target in ("full", "both"):
+        final_charge_tail_meta = dict(result.get("n_full_tail_meta", {}))
+    else:
+        final_charge_tail_meta = dict(result.get("n_cont_tail_meta", {}))
+    ext_charge_tail_meta = dict(
+        result.get("ext_status", {}).get("tail_meta", {})
+    )
+    final_charge_constraint_requested = bool(
+        cfg.b3_source_charge_constraint and str(full_controls["mode"]) == "in_scf"
+    )
+    ext_charge_constraint_requested = bool(
+        do_external
+        and cfg.b3_source_charge_constraint
+        and str(ext_controls["mode"]) == "in_scf"
+    )
 
     meta = {
         "element": symbol,
@@ -2772,20 +4137,67 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         "rho_g_cc": float(cfg.rho_g_cc),
         "temperature_ev": float(cfg.temperature_ev),
         "temperature_ha": float(temperature_ha),
+        "xc_model": str(cfg.xc_model),
+        "xc_provenance": dict(result["xc_provenance"]),
+        "gga_core_mode": str(cfg.gga_core_mode),
+        "gga_core_zr": float(cfg.gga_core_zr),
+        "gga_core_radius_bohr": float(
+            result.get("gga_core_radius_bohr", np.nan)
+        ),
+        "gga_core_points": int(result.get("gga_core_points", 0)),
+        "gga_radial_operator": str(
+            result.get("gga_radial_operator", "not_applicable")
+        ),
+        "density_cusp_rel_error": float(
+            result.get("density_cusp_rel_error", np.nan)
+        ),
+        "v_xc_core_turn_count": int(
+            result.get("v_xc_core_turn_count", 0)
+        ),
         "n_i_bohr3": float(n_i),
         "r_ws_bohr": float(r_ws),
+        "ws_charge_quadrature": (
+            "exact_boundary_linear" if exact_ws_boundary else "sampled_step_grid"
+        ),
+        "ion_sphere_background_quadrature": (
+            "analytic_sharp_shell"
+            if _uses_analytic_ion_sphere_background(
+                cfg, r_ws=float(r_ws), rmax=float(rmax)
+            )
+            else (
+                "sampled_step" if cfg.g_ii_override is None else "sampled_g_ii_override"
+            )
+        ),
         "r_geom_bohr": float(geometry["r_geom"]),
         "r_max_bohr": float(rmax),
         "r_max_eff_mult": float(geometry["rmax_eff_mult"]),
+        "bound_r_max_bohr": float(np.asarray(result.get("r_bound", result["r"]))[-1]),
+        "bound_rmax_mult": (
+            float(cfg.bound_rmax_mult) if cfg.bound_rmax_mult is not None else np.nan
+        ),
+        "bound_zero_tail_refine": bool(cfg.bound_zero_tail_refine),
+        "bound_zero_tail_min_binding_ha": float(cfg.bound_zero_tail_min_binding_ha),
+        "bound_zero_tail_max_binding_ha": float(cfg.bound_zero_tail_max_binding_ha),
+        "bound_zero_tail_scan_points": int(cfg.bound_zero_tail_scan_points),
+        "bound_zero_tail_l_max": int(cfg.bound_zero_tail_l_max),
+        "bound_zero_tail_edge_rel_tol": float(cfg.bound_zero_tail_edge_rel_tol),
+        "bound_zero_tail_applied": bool(
+            result.get("zero_tail_bound_meta", {}).get("applied", False)
+        ),
         "geometry_r_ws_floor_bohr": float(cfg.geometry_r_ws_floor_bohr),
         "geometry_r_ws_cap_bohr": (
-            float(cfg.geometry_r_ws_cap_bohr) if cfg.geometry_r_ws_cap_bohr is not None else np.nan
+            float(cfg.geometry_r_ws_cap_bohr)
+            if cfg.geometry_r_ws_cap_bohr is not None
+            else np.nan
         ),
         "q_full_ws": float(q_full_ws),
         "q_cont_ws": float(q_cont_ws),
         "q_ext_ws": float(q_ext_ws) if np.isfinite(q_ext_ws) else np.nan,
         "n_points": int(cfg.n_points),
         "mu_bounds": tuple(float(x) for x in cfg.mu_bounds),
+        "full_fixed_mu_ha": (
+            float(cfg.full_fixed_mu_ha) if cfg.full_fixed_mu_ha is not None else np.nan
+        ),
         "mu_stage1_ha": float(mu_stage1),
         "mu_final_ha": float(result["mu"]),
         "final_mu": float(result["mu"]),
@@ -2794,7 +4206,9 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         "cont_stage2_e_max_mode": str(cfg.cont_stage2_e_max_mode),
         "cont_stage2_e_max_occ_tol": float(cfg.cont_stage2_e_max_occ_tol),
         "cont_stage2_e_max_floor": float(cfg.cont_stage2_e_max_floor),
-        "cont_stage2_e_max_final": float(result.get("stage2_cont_e_max_final", cfg.cont_e_max)),
+        "cont_stage2_e_max_final": float(
+            result.get("stage2_cont_e_max_final", cfg.cont_e_max)
+        ),
         "cont_n_jobs": int(cfg.cont_n_jobs),
         "cont_n_e_base": int(cfg.cont_n_e_base),
         "cont_energy_mode": str(cfg.cont_energy_mode),
@@ -2802,45 +4216,138 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         "cont_adaptive_mode_stage2": str(cfg.cont_adaptive_mode_stage2),
         "cont_e_base_grid": str(cfg.cont_e_base_grid),
         "cont_dE_min": float(cfg.cont_dE_min),
+        "cont_e_min": float(cfg.cont_e_min),
+        "cont_near_zero_log_grid": bool(cfg.cont_near_zero_log_grid),
+        "cont_near_zero_log_points_per_decade": int(
+            cfg.cont_near_zero_log_points_per_decade
+        ),
+        "cont_near_zero_log_max_nodes": int(cfg.cont_near_zero_log_max_nodes),
+        "cont_near_zero_log_max_energy": (
+            float(cfg.cont_near_zero_log_max_energy)
+            if cfg.cont_near_zero_log_max_energy is not None
+            else np.nan
+        ),
+        "cont_resonance_theta_l_min": int(cfg.cont_resonance_theta_l_min),
+        "cont_resonance_theta_probe_count": int(cfg.cont_resonance_theta_probe_count),
+        "cont_resonance_theta_scan_depth": int(cfg.cont_resonance_theta_scan_depth),
+        "cont_resonance_theta_scout_max_extra_nodes": (
+            int(cfg.cont_resonance_theta_scout_max_extra_nodes)
+            if cfg.cont_resonance_theta_scout_max_extra_nodes is not None
+            else -1
+        ),
+        "cont_resonance_theta_root_tol": (
+            float(cfg.cont_resonance_theta_root_tol)
+            if cfg.cont_resonance_theta_root_tol is not None
+            else np.nan
+        ),
+        "cont_resonance_theta_sharpness_min": float(
+            cfg.cont_resonance_theta_sharpness_min
+        ),
+        "cont_resonance_theta_max_roots": (
+            int(cfg.cont_resonance_theta_max_roots)
+            if cfg.cont_resonance_theta_max_roots is not None
+            else -1
+        ),
+        "cont_resonance_theta_refine_depth": (
+            int(cfg.cont_resonance_theta_refine_depth)
+            if cfg.cont_resonance_theta_refine_depth is not None
+            else -1
+        ),
         "cont_rmax_mult": cfg.cont_rmax_mult,
         "cont_rmax_eff_mult": (
-            float(geometry["solve_rmax_eff_mult"]) if geometry["solve_rmax_eff_mult"] is not None else np.nan
+            float(geometry["solve_rmax_eff_mult"])
+            if geometry["solve_rmax_eff_mult"] is not None
+            else np.nan
         ),
         "cont_parallel_mode": str(cfg.cont_parallel_mode),
         "cont_shards": cfg.cont_shards,
         "full_r_dft_max_bohr": (
-            float(full_controls["solve_rmax"]) if full_controls["solve_rmax"] is not None else float(rmax)
+            float(full_controls["solve_rmax"])
+            if full_controls["solve_rmax"] is not None
+            else float(rmax)
         ),
         "full_match_r_cut_bohr": float(cont_stage2.get("match_r_cut", np.nan)),
         "full_match_width_bohr": float(cont_stage2.get("match_width", np.nan)),
         "full_match_hi_bohr": float(
-            float(cont_stage2.get("match_r_cut", np.nan)) + float(cont_stage2.get("match_width", np.nan))
+            float(cont_stage2.get("match_r_cut", np.nan))
+            + float(cont_stage2.get("match_width", np.nan))
         ),
         "full_match_kr_min": float(cont_stage2.get("match_kr_min", np.nan)),
         "full_cont_l_max": float(cont_stage2.get("l_max", np.nan)),
         "full_cont_l_max_ceiling": float(cont_stage2.get("l_max_ceiling", np.nan)),
         "full_r_fit_max_bohr": (
-            float(full_controls["r_fit_max"]) if full_controls["r_fit_max"] is not None else np.nan
+            float(full_controls["r_fit_max"])
+            if full_controls["r_fit_max"] is not None
+            else np.nan
         ),
-        "full_r_cut_bohr": float(full_controls["r_cut"]) if full_controls["r_cut"] is not None else np.nan,
+        "full_r_cut_bohr": (
+            float(full_controls["r_cut"])
+            if full_controls["r_cut"] is not None
+            else np.nan
+        ),
         "b3_tail_stage1_mode": str(cfg.b3_tail_stage1_mode),
-        "b3_tail_stage2_mode": str(cfg.b3_tail_stage2_mode),
-        "b3_tail_target": str(cfg.b3_tail_target),
+        "b3_tail_stage2_mode": str(full_controls["mode"]),
+        "b3_tail_stage2_mode_raw": str(cfg.b3_tail_stage2_mode),
+        "b3_tail_target": str(full_controls["target"]),
+        "b3_tail_target_raw": str(cfg.b3_tail_target),
         "b3_tail_fit_points": int(cfg.b3_tail_fit_points),
+        "b3_tail_local_fit_width_mult": (
+            np.nan
+            if cfg.b3_tail_local_fit_width_mult is None
+            else float(cfg.b3_tail_local_fit_width_mult)
+        ),
+        "b3_tail_fit_window_mode": str(cfg.b3_tail_fit_window_mode),
+        "b3_tail_fit_window_mode_resolved": str(full_controls["fit_window_mode"]),
         "b3_tail_blend_points": int(cfg.b3_tail_blend_points),
         "b3_tail_model": str(cfg.b3_tail_model),
         "b3_tail_auto_rel_improve_tol": float(cfg.b3_tail_auto_rel_improve_tol),
         "b3_tail_auto_signal_rel_tol": float(cfg.b3_tail_auto_signal_rel_tol),
         "b3_r_fit_max_mult": cfg.b3_r_fit_max_mult,
         "b3_r_fit_max_eff_mult": (
-            float(geometry["r_fit_max_eff_mult"]) if geometry["r_fit_max_eff_mult"] is not None else np.nan
+            float(geometry["r_fit_max_eff_mult"])
+            if geometry["r_fit_max_eff_mult"] is not None
+            else np.nan
         ),
         "b3_r_cut_mult": cfg.b3_r_cut_mult,
         "b3_r_cut_eff_mult": (
-            float(geometry["r_cut_eff_mult"]) if geometry["r_cut_eff_mult"] is not None else np.nan
+            float(geometry["r_cut_eff_mult"])
+            if geometry["r_cut_eff_mult"] is not None
+            else np.nan
         ),
         "b3_cut_width": cfg.b3_cut_width,
         "b3_fallback_on_error": bool(cfg.b3_fallback_on_error),
+        "b3_charge_constraint_requested": bool(final_charge_constraint_requested),
+        "b3_charge_constraint_applied": bool(
+            final_charge_tail_meta.get("charge_constraint_applied", False)
+        ),
+        "b3_charge_constraint_residual": float(
+            final_charge_tail_meta.get("charge_constraint_residual", np.nan)
+        ),
+        "b3_charge_constraint_fit_rms_ratio": float(
+            final_charge_tail_meta.get("charge_constraint_fit_rms_ratio", np.nan)
+        ),
+        "b3_charge_constraint_coeff_delta_rel": float(
+            final_charge_tail_meta.get("charge_constraint_coeff_delta_rel", np.nan)
+        ),
+        "b3_charge_constraint_profile_delta_rel": float(
+            final_charge_tail_meta.get("charge_constraint_profile_delta_rel", np.nan)
+        ),
+        "b3_charge_constraint_min_density": float(
+            final_charge_tail_meta.get("charge_constraint_tail_min", np.nan)
+        ),
+        "b3_charge_constraint_failure_reason": str(
+            final_charge_tail_meta.get("charge_constraint_failure_reason", "")
+        ),
+        "b3_charge_constraint_fit_rms_ratio_max": (
+            np.nan
+            if cfg.b3_charge_constraint_fit_rms_ratio_max is None
+            else float(cfg.b3_charge_constraint_fit_rms_ratio_max)
+        ),
+        "b3_charge_constraint_profile_delta_rel_max": (
+            np.nan
+            if cfg.b3_charge_constraint_profile_delta_rel_max is None
+            else float(cfg.b3_charge_constraint_profile_delta_rel_max)
+        ),
         "cont_tail_match": bool(cfg.cont_tail_match),
         "cont_tail_match_target": str(cfg.cont_tail_match_target),
         "cont_tail_fit_points": int(cfg.cont_tail_fit_points),
@@ -2852,36 +4359,89 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         "source_r_trust_frac": float(cfg.source_r_trust_frac),
         "source_blend_frac": float(cfg.source_blend_frac),
         "source_charge_closure": bool(cfg.source_charge_closure),
-        "full_b3_use_source_closure": bool(cfg.full_b3_use_source_closure),
+        "full_b3_use_source_closure": (
+            "auto"
+            if cfg.full_b3_use_source_closure is None
+            else bool(cfg.full_b3_use_source_closure)
+        ),
+        "full_b3_source_closure_resolved": bool(
+            _resolve_full_b3_source_closure_policy(
+                setting=cfg.full_b3_use_source_closure,
+                tail_target=str(full_controls["target"]),
+            )
+        ),
         "ext_b3_use_source_closure": (
-            "auto" if cfg.ext_b3_use_source_closure is None else bool(cfg.ext_b3_use_source_closure)
+            "auto"
+            if cfg.ext_b3_use_source_closure is None
+            else bool(cfg.ext_b3_use_source_closure)
         ),
         "ext_source_closure_auto_rel_tol": float(cfg.ext_source_closure_auto_rel_tol),
-        "n0_mode_override": (None if cfg.n0_mode_override is None else str(cfg.n0_mode_override)),
-        "n0_fixed_override": (
-            float(cfg.n0_fixed_override) if cfg.n0_fixed_override is not None else np.nan
+        "n0_mode_override": (
+            None if cfg.n0_mode_override is None else str(cfg.n0_mode_override)
         ),
-        "full_n0_mode": str(_resolve_n0_mode(cfg, b3_tail_mode=str(cfg.b3_tail_stage2_mode))),
+        "n0_fixed_override": (
+            float(cfg.n0_fixed_override)
+            if cfg.n0_fixed_override is not None
+            else np.nan
+        ),
+        "full_n0_mode": str(
+            _resolve_n0_mode(cfg, b3_tail_mode=str(full_controls["mode"]))
+        ),
         "run_mode": str(cfg.run_mode),
         "ext_enabled": bool(do_external),
         "ext_match_v_tol": cfg.ext_match_v_tol,
-        "ext_b3_tail_mode": str(cfg.ext_b3_tail_mode),
+        "ext_b3_tail_mode": str(ext_controls["mode"]),
+        "ext_b3_tail_mode_raw": str(cfg.ext_b3_tail_mode),
         "ext_b3_tail_model": (
             str(cfg.ext_b3_tail_model) if cfg.ext_b3_tail_model is not None else ""
         ),
-        "ext_n0_mode": str(_resolve_n0_mode(cfg, b3_tail_mode=str(cfg.ext_b3_tail_mode))),
+        "ext_b3_charge_constraint_requested": bool(ext_charge_constraint_requested),
+        "ext_b3_charge_constraint_applied": bool(
+            ext_charge_tail_meta.get("charge_constraint_applied", False)
+        ),
+        "ext_b3_charge_constraint_residual": float(
+            ext_charge_tail_meta.get("charge_constraint_residual", np.nan)
+        ),
+        "ext_b3_charge_constraint_fit_rms_ratio": float(
+            ext_charge_tail_meta.get("charge_constraint_fit_rms_ratio", np.nan)
+        ),
+        "ext_b3_charge_constraint_coeff_delta_rel": float(
+            ext_charge_tail_meta.get("charge_constraint_coeff_delta_rel", np.nan)
+        ),
+        "ext_b3_charge_constraint_profile_delta_rel": float(
+            ext_charge_tail_meta.get("charge_constraint_profile_delta_rel", np.nan)
+        ),
+        "ext_b3_charge_constraint_min_density": float(
+            ext_charge_tail_meta.get("charge_constraint_tail_min", np.nan)
+        ),
+        "ext_b3_charge_constraint_failure_reason": str(
+            ext_charge_tail_meta.get("charge_constraint_failure_reason", "")
+        ),
+        "ext_n0_mode": str(
+            _resolve_n0_mode(cfg, b3_tail_mode=str(ext_controls["mode"]))
+        ),
         "ext_r_dft_max_bohr": (
-            float(ext_controls["solve_rmax"]) if ext_controls["solve_rmax"] is not None else float(rmax)
+            float(ext_controls["solve_rmax"])
+            if ext_controls["solve_rmax"] is not None
+            else float(rmax)
         ),
         "ext_r_fit_max_bohr": (
-            float(ext_controls["r_fit_max"]) if ext_controls["r_fit_max"] is not None else np.nan
+            float(ext_controls["r_fit_max"])
+            if ext_controls["r_fit_max"] is not None
+            else np.nan
         ),
-        "ext_r_cut_bohr": float(ext_controls["r_cut"]) if ext_controls["r_cut"] is not None else np.nan,
+        "ext_r_cut_bohr": (
+            float(ext_controls["r_cut"])
+            if ext_controls["r_cut"] is not None
+            else np.nan
+        ),
         "screening_tail_repair_mode": str(cfg.screening_tail_repair_mode),
         "screening_tail_repair_rel_tol": float(cfg.screening_tail_repair_rel_tol),
         "screening_tail_charge_weight": float(cfg.screening_tail_charge_weight),
         "screening_tail_r_cut_mult": (
-            float(cfg.screening_tail_r_cut_mult) if cfg.screening_tail_r_cut_mult is not None else np.nan
+            float(cfg.screening_tail_r_cut_mult)
+            if cfg.screening_tail_r_cut_mult is not None
+            else np.nan
         ),
         "screening_tail_r_fit_max_mult": (
             float(cfg.screening_tail_r_fit_max_mult)
@@ -2896,35 +4456,127 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         "stage1_skipped": bool(result.get("stage1_skipped", False)),
         "stage1_converged": bool(result.get("stage1_converged", False)),
         "stage2_converged": bool(result.get("stage2_converged", False)),
+        "threshold_state_status": str(result.get("threshold_state_status", "none")),
+        "threshold_state_localization": str(
+            result.get("threshold_state_localization", "none")
+        ),
+        "threshold_state_representation": str(
+            result.get("threshold_state_representation", "none")
+        ),
+        "threshold_spectral_representation_status": str(
+            result.get("threshold_spectral_representation_status", "none")
+        ),
+        "threshold_tail_domain_status": str(
+            result.get("threshold_tail_domain_status", "none")
+        ),
+        "shallowest_bound_energy_ha": float(
+            result.get("shallowest_bound_energy_ha", np.nan)
+        ),
+        "bound_box_decay_metric": float(result.get("bound_box_decay_metric", np.nan)),
+        "bound_box_decay_metric_from_rws": float(
+            result.get("bound_box_decay_metric_from_rws", np.nan)
+        ),
+        "bound_asymptotic_start_bohr": float(
+            result.get("bound_asymptotic_start_bohr", np.nan)
+        ),
+        "bound_zero_extension_edge_ratio": float(
+            result.get("bound_zero_extension_edge_ratio", np.nan)
+        ),
+        "bound_zero_tail_exterior_probability": float(
+            result.get("bound_zero_tail_exterior_probability", np.nan)
+        ),
+        "bound_zero_tail_finite_wall_energy_ha": float(
+            zero_tail_state.get("finite_wall_energy_ha", np.nan)
+        ),
+        "bound_zero_tail_matched_energy_ha": float(
+            zero_tail_state.get("matched_energy_ha", np.nan)
+        ),
+        "bound_zero_tail_action": str(zero_tail_state.get("action", "none")),
+        "bound_zero_tail_attractive_edge_ratio": float(
+            zero_tail_state.get("edge_relative_to_binding", np.nan)
+        ),
+        "bound_zero_tail_absolute_edge_ratio": float(
+            zero_tail_state.get("edge_absolute_relative_to_binding", np.nan)
+        ),
+        "bound_tail_potential_ratio": float(
+            result.get("bound_tail_potential_ratio", np.nan)
+        ),
+        "bound_probability_inside_rws": float(
+            result.get("bound_probability_inside_rws", np.nan)
+        ),
+        "bound_probability_inside_continuum_rmax": float(
+            result.get("bound_probability_inside_continuum_rmax", np.nan)
+        ),
+        "bound_mean_radius_over_rws": float(
+            result.get("bound_mean_radius_over_rws", np.nan)
+        ),
+        "bound_rms_radius_over_rws": float(
+            result.get("bound_rms_radius_over_rws", np.nan)
+        ),
         "stage2_scf_mixing_scheme": str(stage2_mixer_scheme),
         "stage2_scf_mixing_m": int(stage2_mixer_m),
         "stage2_scf_mix": float(stage2_mixer_mix),
         "bound_energy_cut_mode": str(cfg.bound_energy_cut_mode),
         "bound_energy_cut_value": float(cfg.bound_energy_cut),
         "bound_energy_cut_ha": float(energy_cut),
+        "bound_occ_mode": str(cfg.bound_occ_mode),
+        "ph_kappa": float(cfg.ph_kappa) if ph_enabled else 0.0,
+        "ph_kappa_iters": int(cfg.ph_kappa_iters) if ph_enabled else 0,
+        "final_ph_kappa": float(final_ph_kappa),
+        "stage2_final_ph_kappa": float(stage2_final_ph_kappa),
+        "ext_final_ph_kappa": float(ext_final_ph_kappa),
+        "v_decomposition_source_density": str(
+            result.get("v_decomposition_source_density", "n_full")
+        ),
+        "v_decomposition_source_provenance": str(
+            result.get("v_decomposition_source_provenance", "reported_density")
+        ),
         "full_v_eff_outer_decay": bool(cfg.full_v_eff_outer_decay),
         "full_v_eff_outer_decay_start_rws": float(cfg.full_v_eff_outer_decay_start_rws),
-        "full_v_eff_outer_decay_length_rws": float(cfg.full_v_eff_outer_decay_length_rws),
+        "full_v_eff_outer_decay_length_rws": float(
+            cfg.full_v_eff_outer_decay_length_rws
+        ),
         "ion_bound_gamma": float(cfg.ion_bound_gamma),
         "ion_gamma_mode": str(cfg.ion_gamma_mode),
         "ion_gamma_scale": float(cfg.ion_gamma_scale),
         "ion_gamma_final": float(final_ion_gamma),
+        "g_ii_override_used": bool(cfg.g_ii_override is not None),
+        "v_corr_full_used": bool(v_corr_full_meta["used"]),
+        "v_corr_full_interpolated": bool(v_corr_full_meta["interpolated"]),
+        "v_corr_ext_used": bool(v_corr_ext_meta["used"]),
+        "v_corr_ext_interpolated": bool(v_corr_ext_meta["interpolated"]),
         "ion_cut_mode": str(cfg.ion_cut_mode),
         "ion_cut_c": float(cfg.ion_cut_c),
         "ion_ws_weight_min": float(cfg.ion_ws_weight_min),
         "q_ion_ws": float(q_ion_ws),
+        "bound_q_ion_ws_sum": float(bound_q_ion_ws_sum),
+        "bound_q_ion_ws_closure_residual": float(
+            bound_q_ion_ws_closure_residual
+        ),
+        "q_ion_all": float(q_ion_all),
+        "q_pa_all": float(result.get("q_pa_all", np.nan)),
+        "q_scr_all": float(result.get("q_scr_all", np.nan)),
+        "pa_charge_residual": float(result.get("pa_charge_residual", np.nan)),
+        "zbar_ws": float(zbar_ws),
+        "zbar_partition": float(zbar_partition),
         "zbar": float(zbar_ws),
         "continuation_v_full_init_used": bool(v_full_init_meta["used"]),
         "continuation_v_full_init_interpolated": bool(v_full_init_meta["interpolated"]),
-        "continuation_v_full_init_source_r_min": float(v_full_init_meta["source_r_min"]),
-        "continuation_v_full_init_source_r_max": float(v_full_init_meta["source_r_max"]),
+        "continuation_v_full_init_source_r_min": float(
+            v_full_init_meta["source_r_min"]
+        ),
+        "continuation_v_full_init_source_r_max": float(
+            v_full_init_meta["source_r_max"]
+        ),
         "continuation_v_ext_init_used": bool(v_ext_init_meta["used"]),
         "continuation_v_ext_init_interpolated": bool(v_ext_init_meta["interpolated"]),
         "continuation_v_ext_init_source_r_min": float(v_ext_init_meta["source_r_min"]),
         "continuation_v_ext_init_source_r_max": float(v_ext_init_meta["source_r_max"]),
         "continuation_stage2_from_init": bool(use_stage2_continuation_init),
         "continuation_mu_init": (
-            float(cfg.continuation_mu_init) if cfg.continuation_mu_init is not None else np.nan
+            float(cfg.continuation_mu_init)
+            if cfg.continuation_mu_init is not None
+            else np.nan
         ),
         "continuation_mu_stage2_guess": float(mu_stage2_guess),
         "continuation_scf_mixing_scheme": (
@@ -2943,6 +4595,10 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             else np.nan
         ),
     }
+    # Keep every scalar V_eff tail diagnostic directly accessible from both
+    # the ordinary result and saved metadata.  These fields are intentionally
+    # diagnostic-only and do not override threshold_state_status.
+    meta.update(veff_asymptotic_diag)
     result["meta"] = meta
 
     if cfg.save_data:
@@ -3068,6 +4724,10 @@ def run_minimal(
     element: int | str,
     temperature_ev: float,
     rho_g_cc: float,
+    electronic_model: str = "qm",
+    xc_model: str = "dirac",
+    gga_core_mode: str = "finite",
+    gga_core_zr: float = 0.05,
     run_mode: str = "full+ext",
     show_scf_progress: bool = False,
     save_data: bool = False,
@@ -3081,6 +4741,10 @@ def run_minimal(
         element=element,
         temperature_ev=float(temperature_ev),
         rho_g_cc=float(rho_g_cc),
+        electronic_model=str(electronic_model),
+        xc_model=str(xc_model),
+        gga_core_mode=str(gga_core_mode),
+        gga_core_zr=float(gga_core_zr),
         run_mode=str(run_mode),
         show_scf_progress=bool(show_scf_progress),
         save_data=bool(save_data),

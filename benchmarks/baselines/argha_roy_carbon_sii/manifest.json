@@ -1,0 +1,116 @@
+{
+  "schema_version": "otter_benchmark_manifest_v1",
+  "benchmark_id": "argha_roy_carbon_sii",
+  "title": "Current Otter carbon Sii calculations against DFT-MD data provided by Dr. Argha Roy",
+  "status": "accepted_current_otter_all_displayed_states",
+  "data_rights": {
+    "baseline_origin_type": "project_generated_numerical_output",
+    "reference_data_in_separate_package": true,
+    "reference_redistribution_status": "published_by_maintainer_with_attribution",
+    "reference_license_declared": "NOASSERTION",
+    "public_release_gate": "resolved",
+    "reference_manifest": "../../reference_data/argha_roy_carbon_sii/manifest.json"
+  },
+  "producer": {
+    "project": "Otter",
+    "script_relative_path": "benchmarks/examples/plot_argha_roy_carbon_sii.py",
+    "git_commit": "f47610cb802699e108248fa7fc138e7cbede282e",
+    "worktree_dirty": true,
+    "script_sha256_at_calculation": "54d58decedd1fbed436638a7ba50a0cb3389167b6c0eafc802e57582679756bf",
+    "current_controller_sha256": "c6153f38691992ee4976594d1328e10e6d4eec97b856a862f368f4dfbee97362",
+    "note": "All five displayed PA-HNC curves were recomputed with the current Otter workflow. Each archive passed the AA stage-2, external-AA, threshold-state, HNC fixed-point, and transform-closure gates. No historical PAMD curve is displayed."
+  },
+  "configuration": {
+    "electronic_model": "qm",
+    "structure_model": "IS",
+    "rho_g_cc": 3.51538,
+    "aa_n_points": 1024,
+    "bound_occ_mode": "fd",
+    "bound_rmax_mult": null,
+    "bound_zero_tail_refine": true,
+    "bound_zero_tail_max_binding_ha": 0.01,
+    "bound_zero_tail_scan_points": 64,
+    "bound_zero_tail_edge_rel_tol": 0.1,
+    "b3_tail_model": "full",
+    "continuum_workers_per_state": 4,
+    "qoz_n_points_before_padding": 4096,
+    "qoz_pad_factor": 2.0,
+    "qoz_zbar_mode": "pseudoatom_partition",
+    "qoz_renormalize_nscr_to_zbar": true,
+    "chi0_model": "lindhard_fd",
+    "lfc_model": "chabrier1990",
+    "hnc_nonlinear_tolerance": 0.0001,
+    "hnc_transform_closure_tolerance": 0.0025,
+    "hnc_max_iterations": 1000,
+    "k_retained_max_bohr_inv": 20.0
+  },
+  "units": {
+    "wavenumber": "Bohr^-1",
+    "temperature": "eV",
+    "mass_density": "g cm^-3",
+    "effective_pair_potential_k": "Hartree Bohr^3",
+    "static_structure_factor": "dimensionless"
+  },
+  "states": [
+    {
+      "state_id": "c_rho3p51538_te020_ti020",
+      "element": "C",
+      "rho_g_cc": 3.51538,
+      "te_ev": 20.0,
+      "ti_ev": 20.0,
+      "status": "accepted",
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "zero_tail_matched",
+      "baseline_file": "c_rho3p51538_te020_ti020.npz",
+      "baseline_sha256": "14fcb1ff4b81ef2c68c2fdac7875ddcf4381695c9d36b698a87acb0823dfc484"
+    },
+    {
+      "state_id": "c_rho3p51538_te030_ti030",
+      "element": "C",
+      "rho_g_cc": 3.51538,
+      "te_ev": 30.0,
+      "ti_ev": 30.0,
+      "status": "accepted",
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "zero_tail_matched",
+      "baseline_file": "c_rho3p51538_te030_ti030.npz",
+      "baseline_sha256": "a2b2dd7d46454107ab4344218af53ab8eb6ae1a89e5b06254521b011c768a9e4"
+    },
+    {
+      "state_id": "c_rho3p51538_te040_ti040",
+      "element": "C",
+      "rho_g_cc": 3.51538,
+      "te_ev": 40.0,
+      "ti_ev": 40.0,
+      "status": "accepted",
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "zero_tail_matched",
+      "baseline_file": "c_rho3p51538_te040_ti040.npz",
+      "baseline_sha256": "60a82e4fb00216f135e85c84387814f2cc1cd4f4183df3d813776a1a7dc6eeea"
+    },
+    {
+      "state_id": "c_rho3p51538_te050_ti050",
+      "element": "C",
+      "rho_g_cc": 3.51538,
+      "te_ev": 50.0,
+      "ti_ev": 50.0,
+      "status": "accepted",
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "zero_tail_matched",
+      "baseline_file": "c_rho3p51538_te050_ti050.npz",
+      "baseline_sha256": "9651c91f84528f3a3aaece5c5a12e2906249f5ac0002f8b56608edeb410c968a"
+    },
+    {
+      "state_id": "c_rho3p51538_te100_ti100",
+      "element": "C",
+      "rho_g_cc": 3.51538,
+      "te_ev": 100.0,
+      "ti_ev": 100.0,
+      "status": "accepted",
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "baseline_file": "c_rho3p51538_te100_ti100.npz",
+      "baseline_sha256": "23c29dd8d67c94e089ba8bfead726b99fdbdd1cc4edbd34aa79ff3cadc9da175"
+    }
+  ]
+}

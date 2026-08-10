@@ -19,7 +19,11 @@ Sqrt grid:
 
 References
 ----------
-- C. E. Starrett & D. Saumon (2014), Appendix B.
+- :cite:`StarrettSaumon2014`, Appendix B.
+
+The grid constructors expose Otter's finite-resolution choices explicitly;
+the citation supports the coordinate construction, not a particular point
+count or convergence threshold.
 """
 from typing import NamedTuple
 import numpy as np

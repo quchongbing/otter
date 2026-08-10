@@ -1,0 +1,131 @@
+{
+  "schema_version": "otter_benchmark_manifest_v1",
+  "benchmark_id": "johnson_et_al_2025_two_temperature_al",
+  "title": "Otter versus Johnson et al. (2025) two-temperature aluminium gii",
+  "description": "Three aluminium states corresponding to Johnson et al. Fig. 2(a), 2(c), and 2(d).",
+  "data_rights": {
+    "baseline_origin_type": "project_generated_numerical_output",
+    "reference_data_in_separate_package": true,
+    "reference_redistribution_status": "published_by_maintainer_with_attribution",
+    "reference_license_declared": "NOASSERTION",
+    "public_release_gate": "resolved",
+    "reference_manifest": "../../reference_data/johnson_et_al_2025_two_temperature_al/manifest.json"
+  },
+  "method_publications": [
+    {
+      "citation_key": "StarrettSaumon2013",
+      "doi": "10.1103/PhysRevE.87.013104"
+    },
+    {
+      "citation_key": "StarrettSaumon2014",
+      "doi": "10.1016/j.hedp.2013.12.001"
+    },
+    {
+      "citation_key": "Chabrier1990",
+      "doi": "10.1051/jphys:0199000510150160700"
+    },
+    {
+      "citation_key": "JohnsonEtAl2025",
+      "doi": "10.1103/5c29-kdx1"
+    }
+  ],
+  "producer": {
+    "project": "Otter",
+    "script_relative_path": "benchmarks/examples/plot_johnson_et_al_2025_two_temperature_al.py",
+    "git_commit": "13a307ea8f56f886e8919da5821d040909143432",
+    "worktree_dirty": true,
+    "script_sha256_at_calculation": "2b6793461dcb957fe8b6ce57533c784a8c95acd20fc26afb1d7ad8a645e01d29",
+    "current_controller_sha256": "adcd3993e1a7ff7fbc86fa850d992e2b6a88ad5b0fd2d6ad74575682072faae3",
+    "workflows_sha256_at_calculation": "30f7a13fd5924793955ec8690c55bf0afde9051722fd9081618adf475f9faca0",
+    "status": "three_states_accepted",
+    "note": "The 30 eV state was recalculated after connecting the existing raw potential-strength continuation and Newton-Krylov backend to the one-component workflow. The dirty calculation worktree is identified by exact controller and workflows.py SHA-256 values rather than falsely described as committed."
+  },
+  "configuration": {
+    "electronic_model": "qm",
+    "structure_model": "IS",
+    "aa_n_points": 1024,
+    "bound_occ_mode": "fd",
+    "b3_tail_model": "full",
+    "continuum_workers_per_state": 6,
+    "qoz_n_points_before_padding": 4096,
+    "qoz_pad_factor": 2.0,
+    "qoz_zbar_mode": "pseudoatom_partition",
+    "qoz_renormalize_nscr_to_zbar": true,
+    "chi0_model": "lindhard_fd",
+    "lfc_model": "chabrier1990",
+    "hnc_nonlinear_tolerance": 0.0001,
+    "hnc_transform_closure_tolerance": 0.0025,
+    "hnc_max_iterations": 500,
+    "hnc_primary_solver": "anderson",
+    "hnc_fallback_solver": "newton_krylov",
+    "hnc_potential_scales": [
+      0.05,
+      0.15,
+      0.35,
+      0.6,
+      0.8,
+      1.0
+    ],
+    "hnc_adaptive_continuation": true,
+    "hnc_min_scale_step": 0.002,
+    "r_retained_max_bohr": 20.0,
+    "k_retained_max_bohr_inv": 20.0
+  },
+  "units": {
+    "radius": "Bohr",
+    "wavenumber": "Bohr^-1",
+    "temperature": "eV",
+    "mass_density": "g cm^-3",
+    "pair_distribution": "dimensionless"
+  },
+  "states": [
+    {
+      "state_id": "al_rho2p7_te1_ti1",
+      "element": "Al",
+      "rho_g_cc": 2.7,
+      "te_ev": 1.0,
+      "ti_ev": 1.0,
+      "paper_panel": "Fig. 2(a)",
+      "status": "accepted",
+      "baseline_file": "al_rho2p7_te1_ti1.npz",
+      "baseline_sha256": "a14c400561580a27a4ede5d94684e4d0abdd806870d68928296243c1fdb09e9b",
+      "zbar_partition": 3.0004801088770865,
+      "hnc_best_residual": 4.070409279205147e-05,
+      "hnc_closure_mismatch": 0.0011440617896290028
+    },
+    {
+      "state_id": "al_rho2p7_te10_ti1",
+      "element": "Al",
+      "rho_g_cc": 2.7,
+      "te_ev": 10.0,
+      "ti_ev": 1.0,
+      "paper_panel": "Fig. 2(c)",
+      "status": "accepted",
+      "baseline_file": "al_rho2p7_te10_ti1.npz",
+      "baseline_sha256": "393b3876352d78df43e4f5d52583a0b6c27de755819b3eb861e0258683c75957",
+      "zbar_partition": 3.026460883930323,
+      "hnc_best_residual": 8.006225530243371e-05,
+      "hnc_closure_mismatch": 0.001199035999859932
+    },
+    {
+      "state_id": "al_rho2p7_te30_ti1",
+      "element": "Al",
+      "rho_g_cc": 2.7,
+      "te_ev": 30.0,
+      "ti_ev": 1.0,
+      "paper_panel": "Fig. 2(d)",
+      "status": "accepted",
+      "baseline_file": "al_rho2p7_te30_ti1.npz",
+      "baseline_sha256": "6bf2289249d2791b7e20f8c174c5c4442666f3224dce0eddeef93831740bd785",
+      "zbar_partition": 4.483296652284643,
+      "hnc_primary_solver": "anderson",
+      "hnc_primary_best_residual": 1.0,
+      "hnc_primary_min_s_k": -30.97989,
+      "hnc_solver_path": "direct_anderson->continuation_newton_krylov",
+      "hnc_best_residual": 3.065211566825401e-10,
+      "hnc_min_s_k": 0.005991821592061686,
+      "hnc_max_s_k": 2.0792750622800438,
+      "hnc_closure_mismatch": 2.8353320802310122e-09
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schema_version": "otter_reference_manifest_v1",
+  "reference_id": "argha_roy_carbon_sii",
+  "title": "Carbon DFT-MD static ion structure factors",
+  "origin_type": "author_provided_private_numerical_data",
+  "attribution": "DFT-MD S_ii(k) data provided by Dr. Argha Roy (private communication; unpublished).",
+  "method_label_audit": {
+    "current_benchmark_label": "DFT-MD",
+    "legacy_plot_argha_label": "DFT-MD",
+    "intermediate_otter_migration_label": "DMF-MD",
+    "policy": "Use DFT-MD, matching the original plotting source and the maintainer's current identification; retain the intermediate naming history only as provenance."
+  },
+  "redistribution_status": "published_by_maintainer_with_attribution",
+  "license_declared": "NOASSERTION",
+  "public_release_gate": "resolved",
+  "release_decision": {
+    "decision_date": "2026-08-10",
+    "decision_maker": "Otter project maintainer",
+    "scope": "the six numerical reference files listed in this manifest",
+    "policy": "publish with explicit attribution and without applying Otter's BSD-3-Clause software license to the reference data",
+    "rights_note": "This records the maintainer's repository-distribution decision; it does not assert a third-party data license or replace permission from the data provider."
+  },
+  "state": {
+    "element": "C",
+    "rho_g_cc": 3.51538,
+    "electron_temperature_ev": [1.0, 20.0, 30.0, 40.0, 50.0, 100.0],
+    "ion_temperature_ev": [1.0, 20.0, 30.0, 40.0, 50.0, 100.0]
+  },
+  "columns": [
+    "k_angstrom_inv",
+    "sii_dimensionless",
+    "reported_uncertainty_dimensionless"
+  ],
+  "files": [
+    {
+      "temperature_ev": 1.0,
+      "path": "avg_S_ii_1eV.dat",
+      "sha256": "9f26fd4a483cc4069e6397cd28ff4d1f07d0ae07a1ca6dc6dc7dba54f7bdf92b"
+    },
+    {
+      "temperature_ev": 20.0,
+      "path": "avg_S_ii_20eV.dat",
+      "sha256": "a83ecb29618dea8c2e428ecf5962378a6de363d0201cd1f0e38229bf79461838"
+    },
+    {
+      "temperature_ev": 30.0,
+      "path": "avg_S_ii_30eV.dat",
+      "sha256": "1219d986fb3250e71759bc49a70af43518295d0e8b12275321d7464b38c619a7"
+    },
+    {
+      "temperature_ev": 40.0,
+      "path": "avg_S_ii_40eV.dat",
+      "sha256": "f711857e12cd295b21332edd859feadf6ac5d0b16714c9987f24bd93255870df"
+    },
+    {
+      "temperature_ev": 50.0,
+      "path": "avg_S_ii_50eV.dat",
+      "sha256": "580fd8c6149db5f2fb52fe1e0379fa2fc73cb6a9cbb77aeae6e68354df7eedc6"
+    },
+    {
+      "temperature_ev": 100.0,
+      "path": "avg_S_ii_100eV.dat",
+      "sha256": "a7d386b3d7c9fe3fbe72ef075e3cd32e47f3ec879248baf048970f4b51229dab"
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "schema_version": "otter_reference_manifest_v1",
+  "dataset_id": "bethkenhagen_et_al_2020_carbon_ionization",
+  "title": "Carbon ionization state at 100 eV, digitized from Fig. 3",
+  "source": {
+    "authors": "M. Bethkenhagen et al.",
+    "journal": "Physical Review Research",
+    "volume": "2",
+    "article": "023260",
+    "year": 2020,
+    "figure": "3(a)",
+    "doi": "10.1103/PhysRevResearch.2.023260",
+    "url": "https://doi.org/10.1103/PhysRevResearch.2.023260"
+  },
+  "rights": {
+    "article_license": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "redistribution": "permitted_with_attribution",
+    "digitization": "user-supplied coordinates extracted from the published figure; not an author-supplied table"
+  },
+  "conditions": {
+    "element": "C",
+    "temperature_ev": 100.0
+  },
+  "columns": [
+    {
+      "name": "rho_g_cc",
+      "unit": "g cm^-3"
+    },
+    {
+      "name": "z_free",
+      "unit": "dimensionless"
+    }
+  ],
+  "definition_note": "Figure 3 reports model-dependent Z_free. DFT-MD uses the conduction-band conductivity and TRK sum rule (Eq. 5); it is not asserted to equal either Otter Zbar or Zstar.",
+  "files": [
+    {
+      "file": "DFT-MD.csv",
+      "label": "DFT-MD",
+      "rows": 9,
+      "sha256": "7335114f18136b6eaa37e698c0fb1f1cae8e3257f6ee875754d015a7c46c6dbd"
+    },
+    {
+      "file": "Purgatorio.csv",
+      "label": "Purgatorio",
+      "rows": 22,
+      "sha256": "2b73bd7b038ace209de7705cd427e366caa9b4d09b4a514f04ac2bee243be838"
+    },
+    {
+      "file": "OPAL.csv",
+      "label": "OPAL",
+      "rows": 19,
+      "sha256": "07691414cb4adea0e78d8297238250833c7167a6dba26faa9ee2e79e1e9b7259"
+    },
+    {
+      "file": "ATOMIC.csv",
+      "label": "ATOMIC",
+      "rows": 25,
+      "sha256": "9b8ab2887345558a54425c892db0f36aa050ce731f21fa6896edb87610b42f22"
+    },
+    {
+      "file": "BU-EK.csv",
+      "label": "BU-EK",
+      "rows": 16,
+      "sha256": "7b3effa9d7810e7ca98e8bab74e224459a77b84de4e1a05807ba80927f7423cf"
+    },
+    {
+      "file": "BU-SP.csv",
+      "label": "BU-SP",
+      "rows": 15,
+      "sha256": "c5b813150387073f4158c8f281f57419ae3cbf4cf7b4d4f03d3bdd902dae8aff"
+    },
+    {
+      "file": "PB.csv",
+      "label": "BU-SP + Pauli blocking",
+      "rows": 19,
+      "sha256": "12397df6a544606c881b9b978309f15579ee722950bba67c2ded8bf5cd61bb65"
+    }
+  ]
+}

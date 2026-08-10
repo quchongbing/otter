@@ -11,7 +11,9 @@ Methods
 
 References
 ----------
-- CODATA 2018 (values rounded for convenience).
+- CODATA 2018 values :cite:p:`TiesingaEtAl2021` (rounded for convenience);
+  these constants are supplied as fixed atomic-unit conversion factors by
+  Otter.
 """
 
 EV_TO_HA = 0.03674932217565499

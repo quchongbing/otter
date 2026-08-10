@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from otter import PlasmaWorkflowConfig
+from otter import PlasmaWorkflowConfig, __version__
 from otter.electronic.solvers.free import _prepare_numerov_geometry
 from otter.electronic.xc import dirac_exchange_potential
 from otter.ionic import QOZPotentialOptions
@@ -13,6 +13,8 @@ def test_public_imports() -> None:
     cfg = PlasmaWorkflowConfig(elements=["C"], temperature_ev=10.0, rho_g_cc=1.0)
     assert cfg.temperature_ev == 10.0
     assert isinstance(QOZPotentialOptions(), QOZPotentialOptions)
+    assert isinstance(__version__, str)
+    assert __version__
 
 
 def test_core_helpers_are_callable() -> None:

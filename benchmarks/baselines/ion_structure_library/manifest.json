@@ -1,0 +1,122 @@
+{
+  "schema_version": "otter_benchmark_manifest_v1",
+  "benchmark_id": "ion_structure_library",
+  "title": "Otter ion-structure literature comparisons",
+  "description": "Portable Otter average-atom plus QOZ/HNC states paired with the provenance-audited subset of the local form-factor library.",
+  "data_rights": {
+    "baseline_origin_type": "project_generated_numerical_output",
+    "reference_data_in_separate_package": true,
+    "reference_redistribution_status": "published_by_maintainer_with_attribution",
+    "reference_license_declared": "NOASSERTION",
+    "public_release_gate": "resolved",
+    "reference_manifest": "../../reference_data/ion_structure_library/manifest.json"
+  },
+  "method_publications": [
+    {
+      "citation_key": "StarrettSaumon2013",
+      "doi": "10.1103/PhysRevE.87.013104"
+    },
+    {
+      "citation_key": "StarrettSaumon2014",
+      "doi": "10.1016/j.hedp.2013.12.001"
+    },
+    {
+      "citation_key": "Chabrier1990",
+      "doi": "10.1051/jphys:0199000510150160700"
+    }
+  ],
+  "producer": {
+    "project": "Otter",
+    "git_commit": "0637066cf76dfdd70f80b4238375c540d7c96a1c",
+    "script_relative_path": "benchmarks/runners/regenerate_ion_structure_library.py",
+    "script_sha256": "c5d50130e0bc83c634cf93c044b1c020c51836c6bd98468f3c5b1a9997ced032",
+    "note": "The generator and independent HNC transform-closure tolerance were committed before these files were produced; each NPZ embeds the same revision and a complete result-affecting signature."
+  },
+  "configuration": {
+    "electronic_model": "qm",
+    "structure_model": "IS",
+    "aa_n_points": 1024,
+    "bound_occ_mode": "fd",
+    "b3_tail_model": "full",
+    "continuum_workers_per_state": 6,
+    "qoz_n_points_before_padding": 4096,
+    "qoz_pad_factor": 2.0,
+    "qoz_zbar_mode": "pseudoatom_partition",
+    "qoz_renormalize_nscr_to_zbar": true,
+    "chi0_model": "lindhard_fd",
+    "lfc_model": "chabrier1990",
+    "hnc_nonlinear_tolerance": 0.0001,
+    "hnc_transform_closure_tolerance": 0.0025,
+    "hnc_max_iterations": 500,
+    "r_retained_max_bohr": 20.0,
+    "k_retained_max_bohr_inv": 20.0
+  },
+  "units": {
+    "radius": "Bohr",
+    "wavenumber": "Bohr^-1",
+    "temperature": "eV",
+    "mass_density": "g cm^-3",
+    "electronic_density": "Bohr^-3",
+    "electronic_potential": "Hartree",
+    "effective_pair_potential_r": "Hartree",
+    "effective_pair_potential_k": "Hartree Bohr^3",
+    "pair_distribution": "dimensionless",
+    "static_structure_factor": "dimensionless"
+  },
+  "states": [
+    {
+      "state_id": "al_gill_rho2p7_te5_ti5",
+      "element": "Al",
+      "rho_g_cc": 2.7,
+      "te_ev": 5.0,
+      "ti_ev": 5.0,
+      "baseline_file": "al_gill_rho2p7_te5_ti5.npz",
+      "baseline_sha256": "f13f86bd00ea82ecebe13e5a066d7f6ba923ade6fe8c2d3a83e861021e2013c9",
+      "reference_family": "GillEtAl2015"
+    },
+    {
+      "state_id": "al_clerouin_rho8p1_te10_ti10",
+      "element": "Al",
+      "rho_g_cc": 8.1,
+      "te_ev": 10.0,
+      "ti_ev": 10.0,
+      "baseline_file": "al_clerouin_rho8p1_te10_ti10.npz",
+      "baseline_sha256": "30b7ae657bd379fa4555570e3007ead3308a85ddd0f7f964a71d694a92337395",
+      "reference_family": "ClerouinEtAl2015"
+    },
+    {
+      "state_id": "al_clerouin_rho8p1_te10_ti2",
+      "element": "Al",
+      "rho_g_cc": 8.1,
+      "te_ev": 10.0,
+      "ti_ev": 2.0,
+      "baseline_file": "al_clerouin_rho8p1_te10_ti2.npz",
+      "baseline_sha256": "44e44d706cebceb3356689e52a271333afd1dda7428922ac40cb3b2863049b55",
+      "reference_family": "ClerouinEtAl2015"
+    },
+    {
+      "state_id": "be_wunsch_rho5p544_te13_ti13",
+      "element": "Be",
+      "rho_g_cc": 5.544,
+      "te_ev": 13.0,
+      "ti_ev": 13.0,
+      "baseline_file": "be_wunsch_rho5p544_te13_ti13.npz",
+      "baseline_sha256": "20778c4b78ae4776578694a10e3fa001541193d05830f7b1db1fc0033d85c140",
+      "reference_family": "WunschEtAl2009"
+    },
+    {
+      "state_id": "c_starrett_rho20_te50_ti50",
+      "element": "C",
+      "rho_g_cc": 20.0,
+      "te_ev": 50.0,
+      "ti_ev": 50.0,
+      "baseline_file": "c_starrett_rho20_te50_ti50.npz",
+      "baseline_sha256": "4ab005f0ccb35210cda8b5565203e01dea20b1e76dd42b3db0bbb6327d0e9518",
+      "reference_family": "StarrettSaumon2013"
+    }
+  ],
+  "excluded_extension": {
+    "state_id": "c_starrett_rho3p7_te8p62_ti8p62",
+    "reason": "Otter's threshold-state reliability gate rejects the unresolved pressure-ionization state; it is not force-continued into QOZ/HNC."
+  }
+}

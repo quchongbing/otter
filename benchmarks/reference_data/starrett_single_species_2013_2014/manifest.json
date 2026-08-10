@@ -1,0 +1,115 @@
+{
+  "schema_version": "otter_reference_manifest_v1",
+  "reference_id": "starrett_single_species_2013_2014",
+  "title": "Starrett and Saumon single-species ion pair distributions",
+  "origin_type": "publication_figure_numerical_extractions",
+  "redistribution_status": "published_by_maintainer_with_attribution",
+  "license_declared": "NOASSERTION",
+  "public_release_gate": "resolved",
+  "note": "The CSV files are published by maintainer decision with source attribution. They are not covered by Otter's BSD-3-Clause source-code license, and no third-party data license is asserted. Source PDFs are not bundled. Small negative gii values are retained digitization noise.",
+  "release_decision": {
+    "decision_date": "2026-08-10",
+    "decision_maker": "Otter project maintainer",
+    "scope": "the eight numerical extraction files listed in this manifest",
+    "policy": "publish with explicit publication attribution and license status NOASSERTION",
+    "rights_note": "This repository policy does not assert a license from the publisher or authors for the extracted coordinates."
+  },
+  "publication": {
+    "citation_key": "StarrettSaumon2014",
+    "citation": "C. E. Starrett and D. Saumon, High Energy Density Physics 10, 35-42 (2014)",
+    "doi": "10.1016/j.hedp.2013.12.001",
+    "pii": "S1574181813001900",
+    "url": "https://doi.org/10.1016/j.hedp.2013.12.001"
+  },
+  "columns": {
+    "column_1": "radius coordinate; see each file record",
+    "column_2": "dimensionless pair distribution g_ii(r)"
+  },
+  "extraction_provenance": {
+    "status": "local_numerical_extraction",
+    "note": "The original extraction workflow is not retained; exact curve identities are therefore not inferred from filenames."
+  },
+  "files": [
+    {
+      "path": "gii_C_12.64gcc_64.64ev_starrett.csv",
+      "sha256": "b860d87d07973b0ef1724fc76fb127dfcd17b9400d0faaa0103e5d990bf3a456",
+      "citation_key": "StarrettSaumon2014",
+      "element": "C",
+      "rho_g_cc": 12.64,
+      "temperature_ev": 64.64,
+      "column_1_unit": "r_over_R_WS_dimensionless",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve"
+    },
+    {
+      "path": "gii_Fe_22.5gcc_10.0ev_starrett.csv",
+      "sha256": "5db7613a1e9765158a20ddcb0b4288c2d7fa37d3bcdd0e7b77f936a30f61c57f",
+      "citation_key": "StarrettSaumon2014",
+      "element": "Fe",
+      "rho_g_cc": 22.5,
+      "temperature_ev": 10.0,
+      "column_1_unit": "r_over_R_WS_dimensionless",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve"
+    },
+    {
+      "path": "gii_H_80gcc_5.0ev_starrett.csv",
+      "sha256": "3016dd9ec434cabf39976fa19abd7b57d63add4f2b071e2b645be09a8256ebe1",
+      "citation_key": "StarrettSaumon2014",
+      "element": "H",
+      "rho_g_cc": 80.0,
+      "temperature_ev": 5.0,
+      "column_1_unit": "Bohr",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve"
+    },
+    {
+      "path": "gii_H_80gcc_172.0ev_starrett.csv",
+      "sha256": "85c00cbbe33df38a1ce307836945335c6d88fee58fe40d70c766596ff6e870b7",
+      "citation_key": "StarrettSaumon2014",
+      "element": "H",
+      "rho_g_cc": 80.0,
+      "temperature_ev": 172.0,
+      "column_1_unit": "Bohr",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve"
+    },
+    {
+      "path": "gii_W_40gcc_10.0ev_starrett.csv",
+      "sha256": "f2b81409d6f08ee3e1a033efc3710375ba187784e20bb2d8e257467e12a2d05e",
+      "citation_key": "StarrettSaumon2014",
+      "element": "W",
+      "rho_g_cc": 40.0,
+      "temperature_ev": 10.0,
+      "column_1_unit": "Bohr",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve 1; not plotted by the active gallery"
+    },
+    {
+      "path": "gii_W_40gcc_10.0ev_starrett_TF.csv",
+      "sha256": "0ccfcb09f988334d8f470249102113409f405cd7910d62de60fe6c7c329c0622",
+      "citation_key": "StarrettSaumon2014",
+      "element": "W",
+      "rho_g_cc": 40.0,
+      "temperature_ev": 10.0,
+      "column_1_unit": "Bohr",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve 2"
+    },
+    {
+      "path": "gii_W_40gcc_60ev_starrett.csv",
+      "sha256": "638da53b78a8e37d98b8ede70140a7cf8aa1e0452680cb3599ae0450802c0fc1",
+      "citation_key": "StarrettSaumon2014",
+      "element": "W",
+      "rho_g_cc": 40.0,
+      "temperature_ev": 60.0,
+      "column_1_unit": "Bohr",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve 1; not plotted by the active gallery"
+    },
+    {
+      "path": "gii_W_40gcc_60.0ev_starrett.csv",
+      "sha256": "29341303a7fe5d36e937677d72f4e38091cf1efd3f1c2e6fe712b0c819469951",
+      "citation_key": "StarrettSaumon2014",
+      "element": "W",
+      "rho_g_cc": 40.0,
+      "temperature_ev": 60.0,
+      "column_1_unit": "Bohr",
+      "coordinate_order": "one adjacent inversion in the inherited extraction; stable-sorted only at load/plot time",
+      "trace_identity": "published Starrett-Saumon Thomas-Fermi curve 2"
+    }
+  ]
+}
