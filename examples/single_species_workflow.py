@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,26 +16,16 @@ from otter.plotting import save_figure, set_style
 #            user input parameters
 # -------------------------------------------
 ELEMENT = "Al"
-RHO_G_CC = 2.7
-TE_EV = 30
-TI_EV = 1
+RHO_G_CC = 8.1
+TE_EV = 15.0
+TI_EV = 15.0
 # -------------------------------------------
 
 SHOW_SCF_PROGRESS = True
 SAVE_NPZ = True
-OUTPUT_PATH = ROOT / "outputs" / "al_state.npz"
+OUTPUT_PATH = ROOT / "outputs" / "al_rho8p1_T15_state.npz"
 SAVE_FIGURES = True
 FIGURE_STEM = ROOT / "outputs" / "single_species_aa_qoz_hnc"
-
-# Near pressure ionization, a shallow negative-energy orbital can be
-# misclassified by the finite Dirichlet wall even when the common physical
-# AA box is already asymptotic.  This check matches the orbital to the
-# analytic negative-energy exterior on that same physical box.  It does not
-# create the deprecated artificial 40 R_ws bound-only domain.
-RESOLVE_THRESHOLD_BOUND_STATE = True
-THRESHOLD_MAX_BINDING_HA = 1.0e-2
-THRESHOLD_SCAN_POINTS = 64
-THRESHOLD_EDGE_REL_TOL = 0.1
 # ===========================================
 
 
@@ -90,14 +76,6 @@ def main() -> None:
         temperature_ev=TE_EV,
         rho_g_cc=RHO_G_CC,
         ion_temperature_ev=TI_EV,
-        aa_overrides={
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": RESOLVE_THRESHOLD_BOUND_STATE,
-            "bound_zero_tail_max_binding_ha": THRESHOLD_MAX_BINDING_HA,
-            "bound_zero_tail_scan_points": THRESHOLD_SCAN_POINTS,
-            "bound_zero_tail_edge_rel_tol": THRESHOLD_EDGE_REL_TOL,
-        },
         show_progress=SHOW_SCF_PROGRESS,
         save_state_npz=SAVE_NPZ,
         save_state_path=OUTPUT_PATH,
@@ -173,6 +151,7 @@ def main() -> None:
         )
     ax_potential.set_xlabel(r"$r\,[a_0]$")
     ax_potential.set_ylabel(r"$V_{\mathrm{eff}}(r)\,[\mathrm{Ha}]$")
+    ax_potential.set_xlim(-0.5, 8.0)
     ax_potential.set_ylim(-1.0, 1.0)
     ax_potential.legend(fontsize=8)
 
@@ -180,7 +159,7 @@ def main() -> None:
     ax_gii.plot(r_ion, ion["gii_r"], label=r"$g_{ii}(r)$")
     ax_gii.set_xlabel(r"$r\,[a_0]$")
     ax_gii.set_ylabel(r"$g_{ii}(r)$")
-    ax_gii.set_xlim(0.0, 20.0)
+    ax_gii.set_xlim(-0.5, 20.0)
     ax_gii.legend(fontsize=8)
 
     k_ion = np.asarray(ion["k"], dtype=float)

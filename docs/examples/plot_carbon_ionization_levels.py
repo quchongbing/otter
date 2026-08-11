@@ -11,16 +11,19 @@ finite-temperature average atom.  The same full-AA solutions provide
   to Otter's local numerical
   continuum edge.
 
-The level panels use a second (right-hand) y-axis for each shell's direct
-contribution to the ionic charge,
+The right-hand axis in each level panel shows how many electrons from that
+shell are assigned to the ionic density inside :math:`R_{\mathrm{WS}}`:
 
 .. math::
 
    Q^{\rm ion}_{nl}(R_{\rm WS}) = 2(2l+1)f_{\rm FD}(E_{nl})M(E_{nl})
    \int_0^{R_{\rm WS}} f_{\rm cut}(r)|P_{nl}(r)|^2\,dr.
 
-Solid curves with circle markers are level energies; dashed curves with cross
-markers are the shell charges.  Unlike the total orbital occupation
+Summing these shell contributions gives
+:math:`Q_{\mathrm{ion}}(R_{\mathrm{WS}})`, which is subtracted from the
+nuclear charge to obtain :math:`\bar Z`.  Solid curves with circle markers
+are level energies; dashed curves with cross markers are the shell
+contributions.  Unlike the total orbital occupation
 :math:`\mathrm{OCC}_{nl}=2(2l+1)f_{\rm FD}`, this quantity contains the
 pressure-ionization weight and radial partition that enter
 :math:`\bar Z=Z-Q_{\rm ion}(R_{\rm WS})`, following
@@ -39,10 +42,12 @@ disappearance density from such points.  The bound/continuum construction
 and ionic-density partition follow :cite:t:`StarrettSaumon2014`; the
 negative-energy exterior matching used for shallow states follows the
 boundary-matching construction discussed by :cite:t:`StarrettEtAl2019`.
-For this scan the displayed edge is explicitly
-:math:`E_{\mathrm{cut}}=V_{\mathrm{eff}}(0.70R_{\mathrm{max}})`.  It is the numerical
-partition used by this orbital AA calculation, not the strict
-:math:`\epsilon=0` lower limit in the Appendix-A continuum integral.
+For this scan the displayed edge is
+:math:`E_{\mathrm{cut}}=V_{\mathrm{eff}}(0.70R_{\mathrm{max}})`.  This is the
+local continuum reference used consistently by the finite-domain orbital
+partition.  It need not be zero because the finite numerical potential has
+not necessarily reached its asymptotic gauge value at that radius.  Energies
+shown in the plot are :math:`E_{nl}-E_{\mathrm{cut}}`.
 
 For context, the ionization figure overlays the model-dependent
 :math:`Z^{\mathrm{free}}` curves digitized from Fig. 3(a) of
@@ -50,25 +55,12 @@ For context, the ionization figure overlays the model-dependent
 either Otter :math:`\bar{Z}` or :math:`Z^*`; they are displayed only as a
 definition-aware comparison.
 
-The page uses a checksummed, pressure-ionization-refined Otter result by
-default.  Set
-``RECOMPUTE_WITH_OTTER = True`` below to extend the accepted scan.  Every
-newly calculated state uses
-``2**12 = 4096`` radial points.  The installed accepted archive uses the same
-resolution and contains the shell-resolved :math:`Q^{\rm ion}_{nl}`
-diagnostic, so its requested densities can be reused as exact-method seeds.
-The script is complete and directly executable; recomputed data are staged under
-``benchmarks/outputs`` rather than replacing the accepted gallery data.
-Both figures are saved as PNG and vector PDF files.
-
-Requested states that do not reach a physical SCF fixed point are never
-stored as electronic results.  They are retained separately as failed-point
-audit records and marked by a vertical dotted line in recomputed plots.  A
-diagnostic ``"fd_m"`` result is never substituted for a failed production
-``bound_occ_mode="fd"`` state because it changes the self-consistent bound
-density.  Set
-``OTTER_RETRY_NONCONVERGED_CARBON_IONIZATION=1`` to explicitly retry a cached
-failed point after solver changes.
+The default verifies and loads a checksummed 4096-point Otter scan.  Set
+``RECOMPUTE_WITH_OTTER = True`` to calculate the requested densities.  New
+files are staged under ``benchmarks/outputs`` and do not overwrite accepted
+data.  States that fail the SCF or threshold-state checks are recorded as
+failures rather than plotted as physical results.  Both figures are exported
+as PNG and PDF.
 
 """
 from __future__ import annotations
@@ -190,7 +182,7 @@ NEW_DENSITIES_G_CC = np.asarray((), dtype=float)
 
 # Two independent AA states, each with four continuum workers, use eight
 # explicit workers.  This is faster than a sequential scan without the large
-# memory peak caused by nesting 3 x 6 processes on typical workstations.
+# memory peak caused by nested state and continuum process pools.
 MAX_STATE_WORKERS = 2
 CONTINUUM_WORKERS_PER_STATE = 2
 # Incremental extension is the normal workflow: reuse every requested point

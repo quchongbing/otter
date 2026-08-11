@@ -11,7 +11,7 @@
     "script_relative_path": "benchmarks/runners/regenerate_carbon_lfc_sensitivity.py",
     "script_sha256": "374ce9a8070ef55eece0a2accc0fe37f0fcfa2ac54722f646b946cd98ac77bf1",
     "script_sha256_at_generation": "374ce9a8070ef55eece0a2accc0fe37f0fcfa2ac54722f646b946cd98ac77bf1",
-    "script_sha256_current": "eea6904d6b148c57a73e3cbf88a3d3cf93dbeffbcf5b30396cd51213fa4c1962",
+    "script_sha256_current": "b378897ab41ec847b6db1c15a3b0a3fc30b748fc79e9afa015d67772dc562424",
     "worktree_clean_at_generation": true,
     "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "note": "git_commit identifies HEAD only. When worktree_clean_at_generation is false, script_sha256 and the status hash disclose that uncommitted source participated."

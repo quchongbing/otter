@@ -33,9 +33,9 @@ docstrings, and Sphinx-Gallery examples:
 
 .. code-block:: console
 
-   $ make -C docs html
-   $ make -C docs strict
-   $ make -C docs serve
+   $ poetry run make -C docs html
+   $ poetry run make -C docs strict
+   $ poetry run make -C docs serve
 
 ``strict`` treats Sphinx warnings as errors.  A successful build must not
 modify tracked files because autosummary and gallery products are ignored.
@@ -74,6 +74,4 @@ path.
 .. toctree::
    :maxdepth: 1
 
-   migration
-   ion_structure_library_migration
    roadmap

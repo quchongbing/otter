@@ -41,9 +41,9 @@ The stable state-file interface stores :math:`q(k)`, :math:`f(k)`,
 Scientific plotting
 -------------------
 
-Matplotlib remains optional, but ``otter[plot]`` provides one shared style and
-a dual web/slide export path.  By default :func:`save_figure` writes both a
-high-resolution PNG and an editable vector PDF.
+Otter provides one shared Matplotlib style and a dual web/slide export path.
+By default :func:`save_figure` writes both a high-resolution PNG and an
+editable vector PDF.
 
 .. currentmodule:: otter.plotting
 

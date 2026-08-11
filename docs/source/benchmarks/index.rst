@@ -24,8 +24,8 @@ alongside the model-dependent :math:`Z^{\rm free}` curves from Figure 3(a) of
 :cite:t:`BethkenhagenEtAl2020`, and provides a second figure with the tracked
 orbital levels.  Because these quantities use different electron partitions,
 the comparison is intended to show definitions and trends, not to assign a
-misleading pointwise error.  The complete, directly executable example is
-shown here; the publication-data audit remains available in the dedicated
+misleading pointwise error.  The runnable example is shown here; the
+publication-data audit remains available in the dedicated
 Bethkenhagen benchmark page.
 
 .. raw:: html

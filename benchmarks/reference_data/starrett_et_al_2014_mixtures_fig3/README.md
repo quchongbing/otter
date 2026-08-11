@@ -28,10 +28,8 @@ Bohr. Small negative digitization values are retained as extracted; plotting
 and metrics discard only non-finite values and negative radii.
 
 These CSV files are project-created digitizations of the solid IS-QM curves
-shown in the cited figure. They are not publisher-supplied source data and
-were not supplied or endorsed by the article's authors. They were imported
-from a private precursor benchmark snapshot, which did not record the
-digitization tool or extraction date.
+shown in the cited figure. They are not publisher-supplied or author-supplied
+source data. The digitization tool and extraction date were not recorded.
 
 The article is accessible as an accepted manuscript through APS/CHORUS, but
 no Creative Commons or data-redistribution license has been identified for

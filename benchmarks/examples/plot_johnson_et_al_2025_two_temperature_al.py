@@ -2,23 +2,20 @@ r"""
 Two-temperature aluminium: Johnson et al. (2025)
 =================================================
 
-This directly executable benchmark compares Otter IS-QOZ/HNC
-:math:`g_{ii}(r)` with the three local curve families associated with
+This benchmark compares Otter IS-QOZ/HNC :math:`g_{ii}(r)` with the three
+reference curve families associated with
 Fig. 2(a), 2(c), and 2(d) of :cite:t:`JohnsonEtAl2025`.  The states are
 aluminium at :math:`\rho=2.7` g cm\ :sup:`-3`,
 :math:`T_i=1` eV, and :math:`T_e=1,10,30` eV.  The paper labels the
 reference methods as 2TTCP HNC+bridge, DFT-MD, and YOCP HNC+bridge.
 
-The reference abscissa is :math:`r` in atomic units (Bohr), exactly as shown
-on the published Fig. 2 axis.  The inherited ``plot_zak.py`` labelled the
-same values as ångström; that was a plotting-label bug, not a conversion to
-repeat here.
+The reference abscissa is :math:`r` in atomic units (Bohr), as shown on the
+published Fig. 2 axis.  No coordinate conversion is applied.
 
 Edit only the input block below.  ``USE_PRECOMPUTED_DATA = True`` verifies
 the dedicated accepted-baseline manifest and every NPZ checksum.  With
 ``False``, this same file calls the public Otter workflow, writes candidate
-results under ``benchmarks/outputs``, and plots those freshly calculated
-results.  It does not invoke a hidden runner.
+results under ``benchmarks/outputs``, and plots them.
 
 The publication points have unresolved extraction provenance and are
 published with article/panel attribution and license status ``NOASSERTION``.
@@ -48,8 +45,7 @@ from otter.plotting import save_figure, set_style
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
 
-# Three independent states x six continuum workers uses at most about
-# 18 worker processes on a 24-core workstation.
+# Three independent states, each with six continuum workers.
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
 AA_N_POINTS = 1024

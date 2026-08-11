@@ -168,6 +168,10 @@ R. Piron, T. Blenski. Variational-average-atom-in-quantum-plasmas code and viria
 
 M. Schörner, H. R. Rüter, M. French, R. Redmer. Extending ab initio simulations for the ion-ion structure factor of warm dense aluminum to the hydrodynamic limit using neural network potentials. Physical Review B 105(17), 174310 (2022). DOI: https://doi.org/10.1103/PhysRevB.105.174310.
 
+### `StarrettDaligaultSaumon2015`
+
+C. E. Starrett, J. Daligault, D. Saumon. Pseudoatom molecular dynamics. Physical Review E 91(1), 013104 (2015). DOI: https://doi.org/10.1103/PhysRevE.91.013104.
+
 ### `StarrettEtAl2014`
 
 C. E. Starrett, D. Saumon, J. Daligault, S. Hamel. Integral equation model for warm and hot dense mixtures. Physical Review E 90(3), 033110 (2014). DOI: https://doi.org/10.1103/PhysRevE.90.033110.
@@ -187,6 +191,10 @@ C. E. Starrett, D. Saumon. Erratum: Electronic and ionic structures of warm and 
 ### `StarrettSaumon2014`
 
 C. E. Starrett, D. Saumon. A simple method for determining the ionic structure of warm dense matter. High Energy Density Physics 10, 35–42 (2014). DOI: https://doi.org/10.1016/j.hedp.2013.12.001.
+
+### `StarrettSaumon2016`
+
+C. E. Starrett, D. Saumon. Equation of state of dense plasmas with pseudoatom molecular dynamics. Physical Review E 93(6), 063206 (2016). DOI: https://doi.org/10.1103/PhysRevE.93.063206.
 
 ### `TiesingaEtAl2021`
 

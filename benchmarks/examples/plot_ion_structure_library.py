@@ -2,29 +2,27 @@
 Ion-structure literature library
 ================================
 
-This complete, directly executable Otter benchmark compares QOZ/HNC results
-with curated literature curves for aluminium, beryllium, and carbon.  Edit
-only the input block below.  ``USE_PRECOMPUTED_DATA = True`` verifies and
-loads the reviewed Otter NPZ files.  With ``False``, this same file directly
+This benchmark compares Otter QOZ/HNC results with literature curves for
+aluminium, beryllium, and carbon.  ``USE_PRECOMPUTED_DATA = True`` verifies
+and loads checksummed Otter NPZ files.  With ``False``, this file
 constructs :class:`otter.PlasmaWorkflowConfig`, evaluates every average atom
 and ion structure, saves new NPZ files below
 ``benchmarks/outputs/ion_structure_library/gallery_recomputed``, and plots
-those new results.  It does not import another benchmark runner or producer.
+those results.
 
 In the four-panel :math:`S_{ii}(k)` figure, panel 1 uses Gill *et al.*,
 Fig. 3 :cite:p:`GillEtAl2015`; panels 2 and 3 use Clérouin *et al.*, Fig. 1
 :cite:p:`ClerouinEtAl2015`; and panel 4 uses Wünsch *et al.*, Fig. 2
 :cite:p:`WunschEtAl2009`.  The separate real-space Wünsch comparison uses
-Fig. 1(c).  A carbon extraction is attributed by the local library to
-:cite:t:`StarrettSaumon2013`; its exact panel has not been independently
-verified, so no figure number is claimed.
+Fig. 1(c).  The carbon PA-HNC data were provided by C. E. Starrett
+(private communication; unpublished).
 Reference coordinates remain separate data files because they are digitized
 publication data; all unit conversions are explicit below.
 
 The average-atom/pseudoatom construction follows
 :cite:t:`StarrettSaumon2013,StarrettSaumon2014`, and the default
 finite-temperature jellium LFC follows :cite:t:`Chabrier1990`.  See
-:doc:`the provenance, coordinate units, exclusions, and data-rights audit
+:doc:`the provenance, coordinate units, and data notice
 </benchmarks/ion_structure_library>` for the scientific interpretation.
 Both benchmark figures are exported as matching PNG and vector PDF files
 under ``benchmarks/outputs/ion_structure_library/figures``.
@@ -61,9 +59,9 @@ from otter.plotting import (
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
 
-# Three independent state groups x six continuum workers uses at most about
-# 18 worker processes on a 24-core workstation.  The two Al 8.1-g/cc states
-# share one electronic calculation because only the ion temperature differs.
+# Three independent state groups, each with six continuum workers.  The two
+# Al 8.1-g/cc states share one electronic calculation because only the ion
+# temperature differs.
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
 AA_N_POINTS = 1024
@@ -667,11 +665,11 @@ def plot_observable(
         axes.ravel()[panel].set_visible(False)
     fig.suptitle("Otter QOZ/HNC versus curated literature curves", y=0.985)
     source_line = (
-        "Reference data: Gill et al. (2020); Clérouin et al. (2015); "
+        "Reference data: Gill et al. (2015); Clérouin et al. (2015); "
         "Wunsch et al. (2009)."
         if observable == "sii"
         else "Reference data: Wunsch et al. (2009); "
-        "Starrett and Saumon (2013)."
+        "C. E. Starrett (private communication)."
     )
     fig.text(
         0.5,

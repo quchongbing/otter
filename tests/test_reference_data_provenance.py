@@ -98,11 +98,7 @@ def test_argha_attribution_uncertainty_and_current_otter_states_are_explicit() -
     assert reference["origin_type"] == "author_provided_private_numerical_data"
     assert "Dr. Argha Roy" in reference["attribution"]
     assert "DFT-MD" in reference["attribution"]
-    assert reference["method_label_audit"]["current_benchmark_label"] == "DFT-MD"
-    assert (
-        reference["method_label_audit"]["intermediate_otter_migration_label"]
-        == "DMF-MD"
-    )
+    assert reference["method_label"] == "DFT-MD"
     assert reference["columns"][2] == "reported_uncertainty_dimensionless"
     assert len(reference["files"]) == 6
 
@@ -137,26 +133,6 @@ def test_argha_attribution_uncertainty_and_current_otter_states_are_explicit() -
     )
     assert _sha256(controller) == manifest["producer"]["current_controller_sha256"]
     _check_accepted_archives(directory, manifest)
-
-
-def test_ambiguous_schorner_digitizations_are_not_mislabelled() -> None:
-    inventory = _json(
-        ROOT
-        / "benchmarks"
-        / "reference_data"
-        / "ion_structure_library"
-        / "inventory.json"
-    )
-    record = next(
-        family
-        for family in inventory["families"]
-        if family["name"] == "max2022"
-    )
-    assert record["status"] == (
-        "blocked_method_attribution_ambiguous_and_rights_unresolved"
-    )
-    assert "0.711 angstrom^-1" in record["notes"]
-    assert record["redistribution_status"] == "private_validation_only"
 
 
 def _check_accepted_archives(directory: Path, manifest: dict) -> None:

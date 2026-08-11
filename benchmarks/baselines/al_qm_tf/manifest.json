@@ -10,6 +10,8 @@
     "git_commit": "4e3cfb2a21fe7e6784e0aa1adaef0fcb2ab41206",
     "script_relative_path": "benchmarks/runners/regenerate_al_qm_tf.py",
     "script_sha256": "4084ac63e88efb2524b31d92c59ba7b336982fd46f8f33b78941de14957356b4",
+    "script_sha256_at_generation": "4084ac63e88efb2524b31d92c59ba7b336982fd46f8f33b78941de14957356b4",
+    "script_sha256_current": "5cb283c73e31a10186e21b59da47404b7f1644b3e1a41bfe35a033f33a0e148d",
     "worktree_clean_at_generation": true,
     "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "note": "The commit identifies HEAD only. If worktree_clean_at_generation is false, the script checksum and status hash document that uncommitted source was involved; the commit alone is not a reproducible producer snapshot."

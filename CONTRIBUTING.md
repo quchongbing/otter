@@ -6,21 +6,22 @@ three levels: implementation, numerical invariants, and physical validation.
 
 ## Development setup
 
-Use Python 3.12 or newer and install the editable package:
+Use Python 3.12 or newer and Poetry 2.1 or newer. Install the locked runtime,
+tests, and documentation tools:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev,docs]"
+poetry install
 ```
 
 Run the fast regression suite and strict documentation build:
 
 ```bash
-pytest -q
-make -C docs strict
+poetry run pytest -q
+poetry run make -C docs strict
 ```
+
+On Windows without `make`, use
+`poetry run python -m sphinx -E -a -W --keep-going -b html docs/source docs/build/html`.
 
 ## Change requirements
 

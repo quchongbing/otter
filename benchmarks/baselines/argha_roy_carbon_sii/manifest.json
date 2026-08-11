@@ -17,8 +17,8 @@
     "git_commit": "f47610cb802699e108248fa7fc138e7cbede282e",
     "worktree_dirty": true,
     "script_sha256_at_calculation": "54d58decedd1fbed436638a7ba50a0cb3389167b6c0eafc802e57582679756bf",
-    "current_controller_sha256": "c6153f38691992ee4976594d1328e10e6d4eec97b856a862f368f4dfbee97362",
-    "note": "All five displayed PA-HNC curves were recomputed with the current Otter workflow. Each archive passed the AA stage-2, external-AA, threshold-state, HNC fixed-point, and transform-closure gates. No historical PAMD curve is displayed."
+    "current_controller_sha256": "2278f3ed2012c212f9891490b056772605e6a97677a53225bd75f13f9a025b84",
+    "note": "All five displayed PA-HNC curves were computed with Otter and passed the AA stage-2, external-AA, threshold-state, HNC fixed-point, and transform-closure gates."
   },
   "configuration": {
     "electronic_model": "qm",

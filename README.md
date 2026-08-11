@@ -2,102 +2,78 @@
 
 Otter calculates electronic and ionic structure in warm and hot dense matter.
 From composition, mass density, and temperature it can solve a quantum
-average-atom or finite-temperature Thomas–Fermi model, construct neutral
+average-atom or Thomas–Fermi model, construct neutral
 pseudoatoms, build effective ion–ion potentials, and solve one- or
 multicomponent QOZ/HNC equations.
 
-The implementation follows the average-atom and pseudoatom framework of
-Starrett and collaborators. Model choices, charge closure, nonlinear-solver
-status, and validation metadata remain visible in the result.
-
-[Documentation](https://quchongbing.github.io/otter/) ·
-[Example gallery](https://quchongbing.github.io/otter/gen_examples/) ·
-[Scientific benchmarks](https://quchongbing.github.io/otter/benchmarks/gen_benchmarks/)
-
-> **Status:** Otter is under active development. A converged numerical solve
-> is not, by itself, evidence that an average-atom/HNC model is applicable to a
-> new thermodynamic regime. Use convergence diagnostics and benchmarks.
+Otter is based primarily on the pseudoatom model of
+[Starrett and Saumon (2014)](https://doi.org/10.1016/j.hedp.2013.12.001).
 
 ## Capabilities
 
-- orbital Kohn–Sham full/external average atoms;
-- finite-temperature Thomas–Fermi full/external average atoms;
-- pressure-ionization, weak-bound-state, continuum phase-shift, and B3/Friedel
-  tail diagnostics;
-- single-species and general-mixture common-chemical-potential construction;
-- finite-temperature Lindhard response and several local-field corrections,
-  with Chabrier (1990) as the validated production default;
-- charge-closed one- and multicomponent QOZ effective potentials;
-- HNC solvers that reject unconverged or projected nonphysical roots;
-- portable, pickle-free `q(k)`, `f(k)`, `g_ij(r)`, and `S_ij(k)` state files;
-- cached, provenance-checked literature and model-sensitivity benchmarks.
-
-The AA ↔ QOZ/HNC self-consistent feedback loop is deliberately isolated under
-`otter.experimental`; the ion-sphere construction is the production workflow.
+- finite-temperature quantum and Thomas–Fermi electronic structure; the
+  quantum model provides orbital levels, occupations, and density components;
+- pseudoatom densities `n_ion(r)` and `n_scr(r)`, with form factors
+  `f(k)=n_ion(k)` and `q(k)=n_scr(k)`;
+- effective ion–ion potentials `V_ij(r)` and `V_ij(k)`;
+- one- and multicomponent QOZ/HNC results `g_ij(r)` and `S_ij(k)`.
 
 ## Install
 
-Otter requires Python 3.12 or newer.
+Otter requires CPython 3.12 or newer, Git, and Poetry 2.1.3.
+
+macOS, Linux, or WSL:
+
+```bash
+curl -sSL https://install.python-poetry.org | python3 - --version 2.1.3
+```
+
+Windows PowerShell:
+
+```powershell
+(Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py - --version 2.1.3
+```
+
+Verify the installation:
+
+```console
+poetry --version
+```
+
+Clone and install:
 
 ```bash
 git clone https://github.com/quchongbing/otter.git
 cd otter
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
+poetry install
 ```
 
-Plotting examples require the optional plotting extra:
+Dependencies are locked by `poetry.lock`; Otter is installed in editable mode.
 
-```bash
-python -m pip install -e ".[plot]"
+```console
+poetry run python -c "import otter; print(otter.__version__)"
 ```
 
-All maintained Otter plots use the shared `otter.plotting` style and export
-both a 300 dpi PNG for screens and a vector PDF for papers or slides.
-
-For tests or documentation, use `.[dev]` or `.[docs]`.
+An unlocked fallback is `python -m pip install -e .`. See the
+[installation guide](https://quchongbing.github.io/otter/installing.html).
 
 ## Quick start
 
-The same high-level interface handles one component or a mixture. With
-`ion_temperature_ev` set, the workflow continues through QOZ/HNC:
+Run the complete [single-species workflow](examples/single_species_workflow.py)
+from the repository root:
 
-```python
-from otter import PlasmaWorkflowConfig, solve_plasma_workflow
-
-config = PlasmaWorkflowConfig(
-    elements=["C", "H"],
-    counts=[1.0, 1.36],
-    temperature_ev=8.617333,      # 100 kK
-    ion_temperature_ev=8.617333,
-    rho_g_cc=2.94,
-)
-result = solve_plasma_workflow(config)
-
-electronic = result["electronic"]["result"]
-ionic = result["ion"]
-g_cc = ionic["gij_r"][0, 0]
-s_cc = ionic["sij_k"][0, 0]
+```bash
+poetry run python examples/single_species_workflow.py
 ```
 
-Select the Thomas–Fermi backend with `electronic_model="tf"`. The default
-`"qm"` backend retains orbital shell structure.
+The default state is Al at `rho=8.1 g/cm^3` and `Te=Ti=15 eV`. Edit the input
+block to change the state or output controls. The script plots the electronic
+density, effective potential, `g_ii(r)`, and `S_ii(k)`, and saves PNG, PDF, and
+NPZ files.
 
-### Save `q/f/g/S`
+For mixtures, run [mixture_workflow.py](examples/mixture_workflow.py).
 
-```python
-config = PlasmaWorkflowConfig(
-    elements=["C"],
-    temperature_ev=100.0,
-    ion_temperature_ev=100.0,
-    rho_g_cc=3.7,
-    save_state_npz=True,
-    save_state_path="outputs/carbon_state.npz",
-)
-result = solve_plasma_workflow(config)
-```
+### Saved `q/f/g/S`
 
 The versioned NPZ schema stores:
 
@@ -105,26 +81,20 @@ The versioned NPZ schema stores:
 - `gij_r`, `sij_k`, and (when available) `vij_k`;
 - species ordering, units, model settings, and convergence metadata.
 
-Its default exclusive windows are `r < 20 Bohr` and
-`k < 20 Bohr^-1`; it loads with `allow_pickle=False` and is atomically written
-only after a successful archive is complete.
+The default windows are `r < 20 Bohr` and `k < 20 Bohr^-1`. Archives load with
+`allow_pickle=False` and are written atomically.
 
-Quantum continuum calculations can take minutes or longer near pressure
-ionization. `continue_plasma_workflow_from_electronic_result` reuses an
-already validated electronic result while iterating on downstream QOZ/HNC
-controls.
+Quantum continuum calculations can be slow near pressure ionization.
+`continue_plasma_workflow_from_electronic_result` reuses a validated
+electronic result for subsequent QOZ/HNC calculations.
 
 ## Validation and documentation
 
-The documentation connects equations to implementation, records validity
-limits, and redraws compact cached benchmarks without rerunning expensive
-average-atom calculations:
-
-**Online documentation:** https://quchongbing.github.io/otter/
+Build the documentation and cached benchmark gallery with:
 
 ```bash
-python -m pip install -e ".[docs]"
-make -C docs strict
+poetry install
+poetry run make -C docs strict
 ```
 
 Open `docs/build/html/index.html` after the build. Start with:
@@ -134,7 +104,6 @@ Open `docs/build/html/index.html` after the build. Start with:
 - [scientific benchmark gallery](docs/source/benchmarks/index.rst);
 - [validation policy](docs/source/benchmarks/validation_policy.rst);
 - [portable state schema](docs/source/user_guide/state_exports.rst);
-- [migration ledger](docs/source/development/migration.rst);
 - [development roadmap](docs/source/development/roadmap.rst).
 
 Digitized publication curves and author-provided numerical data have separate
@@ -149,11 +118,11 @@ manifest that reintroduces an unresolved public-release action.
 ## Development
 
 ```bash
-python -m pip install -e ".[dev,docs]"
-pytest -q
-make -C docs strict
-python -m build
-python -m twine check dist/*
+poetry install
+poetry run pytest -q
+poetry run make -C docs strict
+poetry run python -m build
+poetry run python -m twine check dist/*
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for numerical and benchmark review

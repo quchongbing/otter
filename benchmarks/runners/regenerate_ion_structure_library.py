@@ -115,11 +115,15 @@ STATE_GROUPS: dict[str, tuple[dict[str, Any], ...]] = {
 
 def _git_commit() -> str:
     """Return the source revision without storing an absolute checkout path."""
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
 
 
 def _configuration(state: dict[str, Any]) -> PlasmaWorkflowConfig:

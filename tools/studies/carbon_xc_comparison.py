@@ -3,7 +3,7 @@
 Run a QM average-atom plus QOZ/HNC calculation for carbon on a small state
 grid and compare Dirac exchange, LDA-PW correlation, and Libxc PBE::
 
-    PYTHONPATH=src python examples/carbon_xc_comparison.py
+    poetry run python tools/studies/carbon_xc_comparison.py
 
 The default grid is ``rho=[1, 3, 5] g/cc`` and ``Te=Ti=[2, 15, 50] eV``.
 Each XC model gets its own calculation; no electronic result is reused across
@@ -180,7 +180,7 @@ def _print_xc_provenance(records: dict[str, dict[str, Any]]) -> None:
             print(f"    Libxc DOI: {software_doi}", flush=True)
         if dois:
             print(
-                f"    functional DOIs: {'; '.join(_unique_strings(dois))}",
+                f"    XC reference DOI(s): {'; '.join(_unique_strings(dois))}",
                 flush=True,
             )
 

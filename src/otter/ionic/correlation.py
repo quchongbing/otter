@@ -1,26 +1,9 @@
-"""
-otter/ionic/correlation.py
+r"""Ion-sphere pair correlation used by the average-atom construction.
 
-Purpose
--------
-Provide ion-ion correlation models g_II(r) for AA/PAMD workflows.
-
-Methods
--------
-- Ion-sphere (IS) step model: g_II(r) = Theta(r - R_ws).
-- Interface placeholder for future self-consistent QOZ updates.
-
-Equations
----------
-Ion-sphere model:
-  g_II(r) = 0 (r < R_ws), 1 (r >= R_ws)
-
-Wigner-Seitz radius:
-  R_ws = (3 / (4*pi*n_I^0))^(1/3)
-
-References
-----------
-- C. E. Starrett & D. Saumon (2014), Eq. (1).
+The step model is :math:`g_{II}(r)=\Theta(r-R_{\rm WS})`, with
+:math:`R_{\rm WS}=[3/(4\pi n_I^0)]^{1/3}`; see Eq. (1) of
+Starrett and Saumon, High Energy Density Physics 10, 35--42 (2014),
+doi:10.1016/j.hedp.2013.12.001.
 """
 from __future__ import annotations
 
@@ -74,7 +57,7 @@ class IonCorrelationModel:
                               n_scr: np.ndarray,
                               params: Dict[str, Any] | None = None) -> None:
         """
-        Optional hook for self-consistent updates using screening density.
+        Update the model from a screening density when supported.
 
         Parameters
         ----------
@@ -84,6 +67,9 @@ class IonCorrelationModel:
             Screening density (Bohr^-3).
         params : dict
             Optional update parameters.
+        Notes
+        -----
+        The base implementation leaves the model unchanged.
         """
         return None
 

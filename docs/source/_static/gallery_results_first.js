@@ -98,9 +98,7 @@
     }
     const note = document.createElement("p");
     note.className = "otter-gallery-run-note";
-    note.textContent =
-      "Each page includes a complete, directly executable Python script " +
-      "and a source download.";
+    note.textContent = "Each page provides runnable Python source and a download.";
     gallery.parentNode.insertBefore(note, gallery);
   }
 

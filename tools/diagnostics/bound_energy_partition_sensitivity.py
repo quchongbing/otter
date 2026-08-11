@@ -55,7 +55,7 @@ PARTITIONS = {
     "fixed_m1e3": ("fixed", -1.0e-3),
 }
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = (
     ROOT / "benchmarks" / "outputs" / "bound_energy_partition_sensitivity"
 )

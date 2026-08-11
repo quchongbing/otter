@@ -2,17 +2,15 @@ r"""
 Single-species Starrett--Saumon ion-structure benchmarks
 ========================================================
 
-This directly executable benchmark compares Otter IS-QOZ/HNC pair
-distribution functions with locally retained Starrett TF numerical extractions from
+This benchmark compares Otter IS-QOZ/HNC pair-distribution functions with
+Starrett TF numerical extractions from
 :cite:t:`StarrettSaumon2014` (doi:
 `10.1016/j.hedp.2013.12.001
 <https://doi.org/10.1016/j.hedp.2013.12.001>`__).  Published data are shown
 only as open circles.  Otter KS-DFT (QM) calculations are requested for every
 thermodynamic state; the tungsten panels additionally request Thomas--Fermi
-(TF), matching the retained source comparison.  The inherited W
-curve-1 extractions remain in the reference package for provenance,
-but are intentionally not plotted.  Curves are shown only when they pass the
-electronic, HNC, and transform-closure gates.
+(TF), matching the source comparison.  Curves are shown only when they pass
+the electronic, HNC, and transform-closure gates.
 
 Edit the input block below.  ``USE_PRECOMPUTED_DATA = True`` verifies and
 loads only strictly accepted Otter archives.  With ``False``, this same script
@@ -50,8 +48,8 @@ from otter.plotting import grid_figsize, save_figure, set_style
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
 
-# Three state processes x six continuum workers use at most about 18 workers
-# on a 24-core workstation.  Use one state worker on a memory-constrained host.
+# Three state processes, each with six continuum workers.  Use one state
+# worker on a memory-constrained host.
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
 AA_N_POINTS = 1024

@@ -21,6 +21,10 @@ prune docs/source/gen_examples
 prune docs/source/gen_modules
 prune docs/source/benchmarks/gen_benchmarks
 prune benchmarks/outputs
+prune examples/outputs
+prune tools/outputs
+prune tools/diagnostics/outputs
+prune tools/studies/outputs
 
 exclude docs/source/sg_execution_times.rst
 

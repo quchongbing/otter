@@ -92,7 +92,7 @@ def test_repository_citation_keys_are_registered() -> None:
         re.compile(r'"citation_key"\s*:\s*"([^"]+)"'),
     )
     used: set[str] = set()
-    for folder in ("src", "docs", "examples", "benchmarks"):
+    for folder in ("src", "docs", "examples", "benchmarks", "tools"):
         for path in (root / folder).rglob("*"):
             if path.suffix not in {".py", ".rst", ".md", ".json"}:
                 continue

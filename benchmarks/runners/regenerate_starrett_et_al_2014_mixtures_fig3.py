@@ -124,17 +124,28 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _git_text(*args: str) -> str:
-    return subprocess.check_output(["git", *args], cwd=ROOT, text=True)
-
-
 def _producer_metadata() -> dict[str, Any]:
     """Record the exact source state without claiming dirty HEAD is enough."""
-    status = _git_text("status", "--porcelain=v1", "--untracked-files=all")
+    try:
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        status = "git metadata unavailable\n"
+        commit = "unknown"
     script = Path(__file__).resolve()
     return {
         "project": "Otter",
-        "git_commit": _git_text("rev-parse", "HEAD").strip(),
+        "git_commit": commit,
         "script_relative_path": str(script.relative_to(ROOT)),
         "script_sha256": _sha256(script),
         "worktree_clean_at_generation": not bool(status),

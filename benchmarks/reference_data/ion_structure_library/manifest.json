@@ -1,7 +1,7 @@
 {
   "schema_version": "otter_reference_manifest_v1",
   "reference_id": "ion_structure_library",
-  "origin_type": "publication_figure_digitizations_or_extractions",
+  "origin_type": "mixed_publication_extractions_and_author_provided_data",
   "redistribution_status": "published_by_maintainer_with_attribution",
   "license_declared": "NOASSERTION",
   "public_release_gate": "resolved",
@@ -10,11 +10,9 @@
     "decision_date": "2026-08-10",
     "decision_maker": "Otter project maintainer",
     "scope": "the numerical reference files listed in this manifest",
-    "policy": "publish with explicit publication attribution and license status NOASSERTION",
-    "rights_note": "This repository policy is not a representation that the cited publishers licensed the extracted coordinates for redistribution."
+    "policy": "publish with explicit source attribution and license status NOASSERTION",
+    "rights_note": "This repository policy is not a representation that the cited publishers or data providers licensed the numerical values for downstream redistribution."
   },
-  "inventory_file": "inventory.json",
-  "inventory_sha256": "de57f2f56c629956f42242061f06769c11b21e4b2be44b80fd9b3bbc6c95008a",
   "files": [
     {
       "path": "gill_et_al_2015/Sii_Al_T5ev_rho2.7_KS-PAMD_Gill.csv",
@@ -89,7 +87,8 @@
     {
       "path": "starrett_saumon_2013/gii_C_20gcc_50.0ev_starrett.csv",
       "sha256": "5c3a6649f1c6b30e497890da510fdd7b346419e53c2cf350b6883b36278ca5b3",
-      "citation_key": "StarrettSaumon2013"
+      "origin_type": "author_provided_private_numerical_data",
+      "attribution": "PA-HNC g_ii(r) data provided by C. E. Starrett (private communication; unpublished)."
     },
     {
       "path": "starrett_saumon_2013/gii_C_3.7gcc_8.62ev_starrett.csv",

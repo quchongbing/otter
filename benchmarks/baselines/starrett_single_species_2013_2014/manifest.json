@@ -43,8 +43,8 @@
     "script_relative_path": "benchmarks/examples/plot_starrett_single_species_2013_2014.py",
     "git_base_revision": "f47610cb802699e108248fa7fc138e7cbede282e",
     "worktree_dirty": true,
-    "current_controller_sha256": "4a21ea61d9833aca4ac4d0fce5ecf563882e75b8cd6c0def915deb61d6597d9c",
-    "note": "The exact standalone-controller and baseline hashes provide integrity for these dirty-worktree calculations; they are not represented as output from a clean commit."
+    "current_controller_sha256": "c537841760894fb0c269b4d3528ff0f57ddf3cae113af7a3342fa80eb80b67bc",
+    "note": "Controller and baseline hashes identify the uncommitted calculation state."
   },
   "states": [
     {

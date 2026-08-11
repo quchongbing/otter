@@ -64,6 +64,8 @@
     "project": "Otter",
     "git_commit": "4e3cfb2a21fe7e6784e0aa1adaef0fcb2ab41206",
     "script_sha256": "73e7f7d68ac658ed14293c6eb1e9b7eaa6a24b80ca690775174fc8d25a4e3188",
+    "script_sha256_at_generation": "73e7f7d68ac658ed14293c6eb1e9b7eaa6a24b80ca690775174fc8d25a4e3188",
+    "script_sha256_current": "b43570832b5ba2398fb0ea17bc5523555952f9b86d343424bac9282328bbf7d1",
     "worktree_clean_at_generation": true,
     "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "script_relative_path": "benchmarks/runners/regenerate_al_is_sc_comparison.py"

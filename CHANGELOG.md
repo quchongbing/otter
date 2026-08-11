@@ -3,6 +3,20 @@
 This project follows [Semantic Versioning](https://semver.org/). Changes that
 have not yet been released are collected under “Unreleased”.
 
+## Unreleased
+
+### Changed
+
+- Added a Poetry lock file and one cross-platform `poetry install` path with
+  runtime, plotting, tests, documentation, and editable source installation.
+- Added package-install smoke tests on all three operating systems and on
+  supported CPython release lines.
+- Replaced the duplicated quick-start snippets with the canonical
+  ``examples/single_species_workflow.py`` example, which now exercises the
+  production defaults directly.
+- Kept the top-level examples focused on single-species and mixture workflows;
+  numerical diagnostics and model studies now live under ``tools``.
+
 ## 0.2.0 - 2026-08-10
 
 ### Added

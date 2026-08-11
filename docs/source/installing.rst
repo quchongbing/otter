@@ -4,52 +4,90 @@ Installation
 Requirements
 ------------
 
-Otter requires Python 3.12 or newer together with NumPy, SciPy, and Numba.
-Matplotlib is an optional dependency used by examples and benchmark plots.  A
-dedicated virtual environment is recommended.
+Otter requires CPython 3.12 or newer.  Core dependencies are NumPy, SciPy,
+Numba, and Matplotlib.
 
-Development installation
-------------------------
+Install Python and Poetry
+-------------------------
 
-Clone the repository, create an environment, and install the current checkout
-in editable mode:
+Install `Python <https://www.python.org/downloads/>`_ and
+`Git <https://git-scm.com/downloads/>`_, then install Poetry 2.1.3.
+
+macOS, Linux, or WSL:
+
+.. code-block:: console
+
+   $ curl -sSL https://install.python-poetry.org | python3 - --version 2.1.3
+
+Windows PowerShell:
+
+.. code-block:: powershell
+
+   (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py - --version 2.1.3
+
+If ``py`` is unavailable, use ``python``.  Restart the terminal if necessary,
+then verify:
+
+.. code-block:: console
+
+   $ poetry --version
+
+If the command is unavailable, add Poetry to ``PATH`` as reported by the
+installer.
+
+Install Otter
+-------------
+
+Clone the repository and install from the lock file:
 
 .. code-block:: console
 
    $ git clone https://github.com/quchongbing/otter.git
    $ cd otter
-   $ python3.12 -m venv .venv
-   $ source .venv/bin/activate
-   $ python -m pip install --upgrade pip
-   $ python -m pip install -e ".[dev,docs]"
+   $ poetry install
 
-An editable installation makes changes under ``src/otter`` immediately
-available without reinstalling the package.
+``poetry install`` installs the locked dependencies and Otter in editable
+mode.
 
-Verify the installation
------------------------
+Run commands inside the managed environment with ``poetry run``:
 
 .. code-block:: console
 
-   $ python -c "import otter; print(otter.__file__)"
-   $ pytest -q
+   $ poetry run python -c "import otter; print(otter.__version__)"
+
+Run the tests
+-------------
+
+.. code-block:: console
+
+   $ poetry run pytest -q
 
 Build the documentation
 -----------------------
 
-Install the documentation dependencies and run a strict local build:
+Run a strict local build:
 
 .. code-block:: console
 
-   $ python -m pip install -e ".[docs]"
-   $ make -C docs strict
+   $ poetry run make -C docs strict
 
-The resulting site is written to ``docs/build/html``.  It can be served only
-on the local machine with:
+Without ``make`` (for example, on Windows), run:
 
 .. code-block:: console
 
-   $ make -C docs serve
+   $ poetry run python -m sphinx -E -a -W --keep-going -b html docs/source docs/build/html
+
+Output is written to ``docs/build/html``.  To serve it locally:
+
+.. code-block:: console
+
+   $ poetry run make -C docs serve
+
+Unlocked pip fallback
+---------------------
+
+Without Poetry, use ``python -m pip install -e .``.  This does not use
+:file:`poetry.lock`.
 
 Otter's source repository does not track generated HTML, autosummary pages, or
 Sphinx-Gallery output.

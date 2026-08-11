@@ -30,6 +30,8 @@
     "git_commit": "0637066cf76dfdd70f80b4238375c540d7c96a1c",
     "script_relative_path": "benchmarks/runners/regenerate_ion_structure_library.py",
     "script_sha256": "c5d50130e0bc83c634cf93c044b1c020c51836c6bd98468f3c5b1a9997ced032",
+    "script_sha256_at_generation": "c5d50130e0bc83c634cf93c044b1c020c51836c6bd98468f3c5b1a9997ced032",
+    "script_sha256_current": "4ce96ea98bcc0d527be2e424816efc09ccbc134adac5c50599807b30f46ff1ab",
     "note": "The generator and independent HNC transform-closure tolerance were committed before these files were produced; each NPZ embeds the same revision and a complete result-affecting signature."
   },
   "configuration": {
@@ -112,7 +114,7 @@
       "ti_ev": 50.0,
       "baseline_file": "c_starrett_rho20_te50_ti50.npz",
       "baseline_sha256": "4ab005f0ccb35210cda8b5565203e01dea20b1e76dd42b3db0bbb6327d0e9518",
-      "reference_family": "StarrettSaumon2013"
+      "reference_family": "StarrettPrivateCommunication"
     }
   ],
   "excluded_extension": {

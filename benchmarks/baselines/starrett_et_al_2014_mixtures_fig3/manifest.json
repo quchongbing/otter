@@ -52,11 +52,11 @@
       "state": "see states; cache signature stores each state separately",
       "structure_model": "IS"
     },
-    "description": "Validated private precursor IS-QOZ/HNC curves cropped to the published 0 <= r <= 6 Bohr comparison window.",
+    "description": "Precursor-implementation IS-QOZ/HNC curves cropped to the published 0 <= r <= 6 Bohr comparison window.",
     "metrics_file": "metrics.csv",
     "metrics_sha256": "19b569f7c2bdf73d95a92b36b6000c15b60f8682f8272f3ab8cb65d77ff4a374",
     "producer_git_commit": "f83e1e9fe412485664fac62d9d15c90f8835cc75",
-    "producer_project": "private_precursor_project",
+    "producer_project": "precursor_implementation",
     "producer_worktree_clean": false,
     "provenance_note": "The source repository contained uncommitted benchmark-script and digitized-CSV edits. Per-file SHA256 hashes and embedded producer signatures are authoritative for this imported dataset.",
     "source_summary_sha256": "a5d2e9984f9f5a2fe9256c1dfd71648c842b3ffbfef737e312d4ea987b7fb8f3"
@@ -101,7 +101,7 @@
           "generated comparison metric files"
         ],
         "digitization_is_derived_data": true,
-        "digitization_provenance": "Imported from a private precursor benchmark snapshot; the extraction tool and date were not recorded in that snapshot.",
+        "digitization_provenance": "Independent project digitization; the extraction tool and date were not recorded.",
         "doi_url": "https://doi.org/10.1103/PhysRevE.90.033110",
         "license_concluded": "NOASSERTION",
         "license_declared": "NOASSERTION",

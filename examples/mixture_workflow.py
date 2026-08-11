@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,7 +17,7 @@ from otter.plotting import save_figure, set_style
 ELEMENTS = ["C", "H"]
 COUNTS = [1.0, 1.36]
 RHO_G_CC = 5.0
-TE_EV = 10.0
+TE_EV = 8.617333262  # 100 kK
 TI_EV = TE_EV
 
 # ===========================================
@@ -56,7 +52,7 @@ def _plot_pair_matrices(ion: dict) -> None:
 
     ax_g.set_xlabel("r [Bohr]")
     ax_g.set_ylabel("g_ij(r)")
-    ax_g.set_xlim(0.0, 20.0)
+    ax_g.set_xlim(-0.5, 20.0)
     ax_g.legend(fontsize=8)
 
     ax_s.set_xlabel("k [1/Bohr]")
@@ -81,9 +77,6 @@ def main() -> None:
         ion_temperature_ev=TI_EV,
         show_progress=SHOW_SCF_PROGRESS,
         show_mu_progress=SHOW_MIXTURE_ROOT_PROGRESS,
-        # Production defaults use FD bound occupations, the full B3/Friedel
-        # tail, Chabrier (1990) LFC, charge-closed QOZ, and a physical
-        # multicomponent HNC root.
         save_state_npz=SAVE_NPZ,
         save_state_path=OUTPUT_PATH,
     )

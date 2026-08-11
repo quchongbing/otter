@@ -19,7 +19,7 @@
     "doi": "10.1103/5c29-kdx1",
     "url": "https://doi.org/10.1103/5c29-kdx1",
     "figure": "Fig. 2(a), Fig. 2(c), and Fig. 2(d)",
-    "omitted_panel": "Fig. 2(b), Te=3 eV, is absent from the local source library",
+    "omitted_panel": "Fig. 2(b), Te=3 eV, is not included in this reference package",
     "data_availability": "Data are available from the corresponding author upon reasonable request."
   },
   "physical_state": {
@@ -33,7 +33,7 @@
   },
   "unit_audit": {
     "source": "Johnson et al. (2025), Fig. 2 axis label r [au]",
-    "legacy_issue": "The inherited plot_zak.py labelled these unchanged coordinates as angstrom; that label is a plotting bug and no numerical rescaling is applied here."
+    "conversion_applied": false
   },
   "method_labels": {
     "AA": "2TTCP HNC+bridge",
@@ -42,7 +42,7 @@
   },
   "extraction_provenance": {
     "status": "unresolved",
-    "note": "The inherited local library does not say whether the coordinates were author-provided or digitized from the published figure."
+    "note": "The available files do not say whether the coordinates were author-provided or digitized from the published figure."
   },
   "files": [
     {

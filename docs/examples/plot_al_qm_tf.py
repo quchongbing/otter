@@ -2,20 +2,17 @@
 Aluminium KS-DFT and Thomas--Fermi comparison
 ==============================================
 
-This is a complete, directly executable Otter example.  It compares
-Kohn--Sham density-functional theory (KS-DFT, internally ``qm``) and
+This example compares Kohn--Sham density-functional theory (KS-DFT, API model
+``qm``) and
 finite-temperature Thomas--Fermi (TF) average atoms for aluminium at
 ``rho=8.1 g/cc`` and ``T=1, 15, 50, 100 eV``.  Both electronic models feed
 the same ion-sphere pseudoatom, QOZ/HNC, and Chabrier-1990 LFC construction.
 
-Only the parameters in the input block below need to be edited.
-``USE_PRECOMPUTED_DATA = True`` verifies and loads reviewed NPZ files.
-Set ``RECOMPUTE_WITH_OTTER = True`` (and
-``USE_PRECOMPUTED_DATA = False``) to make this same file construct
+Set ``RECOMPUTE_WITH_OTTER = True`` to make this file construct
 :class:`otter.PlasmaWorkflowConfig` objects, call
 :func:`otter.solve_plasma_workflow`, save new NPZ files under
-``benchmarks/outputs/al_qm_tf/gallery_recomputed``, and plots them.  It does
-not import another benchmark runner or producer.
+``benchmarks/outputs/al_qm_tf/gallery_recomputed``, and plot them.  The
+default verifies and loads checksummed NPZ results.
 
 The model follows :cite:t:`StarrettSaumon2014` and the finite-temperature
 jellium LFC follows :cite:t:`Chabrier1990`.  See :doc:`the model-comparison
@@ -31,7 +28,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import ExitStack
 import hashlib
 import json
-import os
 from pathlib import Path
 import time
 
@@ -45,16 +41,8 @@ from otter.plotting import grid_figsize, save_figure, style_context
 # =============================================================================
 # User input
 # =============================================================================
-USE_PRECOMPUTED_DATA = True
 RECOMPUTE_WITH_OTTER = False
-if os.environ.get("OTTER_RECOMPUTE_AL_QM_TF", "0") == "1":
-    USE_PRECOMPUTED_DATA = False
-    RECOMPUTE_WITH_OTTER = True
-
-if USE_PRECOMPUTED_DATA == RECOMPUTE_WITH_OTTER:
-    raise ValueError(
-        "Select exactly one data mode: precomputed or recompute with Otter."
-    )
+USE_PRECOMPUTED_DATA = not RECOMPUTE_WITH_OTTER
 
 RHO_G_CC = 8.1
 TEMPERATURES_EV = (1.0, 15.0, 50.0, 100.0)

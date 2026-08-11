@@ -4,12 +4,7 @@
   "title": "Carbon DFT-MD static ion structure factors",
   "origin_type": "author_provided_private_numerical_data",
   "attribution": "DFT-MD S_ii(k) data provided by Dr. Argha Roy (private communication; unpublished).",
-  "method_label_audit": {
-    "current_benchmark_label": "DFT-MD",
-    "legacy_plot_argha_label": "DFT-MD",
-    "intermediate_otter_migration_label": "DMF-MD",
-    "policy": "Use DFT-MD, matching the original plotting source and the maintainer's current identification; retain the intermediate naming history only as provenance."
-  },
+  "method_label": "DFT-MD",
   "redistribution_status": "published_by_maintainer_with_attribution",
   "license_declared": "NOASSERTION",
   "public_release_gate": "resolved",
@@ -18,7 +13,7 @@
     "decision_maker": "Otter project maintainer",
     "scope": "the six numerical reference files listed in this manifest",
     "policy": "publish with explicit attribution and without applying Otter's BSD-3-Clause software license to the reference data",
-    "rights_note": "This records the maintainer's repository-distribution decision; it does not assert a third-party data license or replace permission from the data provider."
+    "rights_note": "This repository-distribution decision does not assert a third-party data license or replace permission from the data provider."
   },
   "state": {
     "element": "C",

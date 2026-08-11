@@ -8,6 +8,7 @@ __pycache__/
 build/
 dist/
 outputs/
+.private/
 
 # Sphinx writes these trees from the hand-written sources on every build.
 # Keeping them out of version control makes local and CI builds reproducible.

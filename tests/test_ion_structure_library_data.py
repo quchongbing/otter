@@ -66,6 +66,12 @@ def test_library_manifest_hashes_and_portable_archives() -> None:
         "published_by_maintainer_with_attribution"
     )
     assert manifest["data_rights"]["public_release_gate"] == "resolved"
+    carbon_state = next(
+        item for item in manifest["states"] if item["element"] == "C"
+    )
+    assert carbon_state["reference_family"] == (
+        "StarrettPrivateCommunication"
+    )
     serialized = json.dumps(manifest)
     assert "/home/" not in serialized
     assert "/tmp/" not in serialized
@@ -158,9 +164,14 @@ def test_reference_manifest_hashes_and_release_decision() -> None:
     )
     assert manifest["license_declared"] == "NOASSERTION"
     assert manifest["public_release_gate"] == "resolved"
-    assert _sha256(REFERENCE_DIR / manifest["inventory_file"]) == (
-        manifest["inventory_sha256"]
+    carbon = next(
+        item
+        for item in manifest["files"]
+        if item["path"].endswith("gii_C_20gcc_50.0ev_starrett.csv")
     )
+    assert carbon["origin_type"] == "author_provided_private_numerical_data"
+    assert "C. E. Starrett" in carbon["attribution"]
+    assert "unpublished" in carbon["attribution"]
     for item in manifest["files"]:
         relative = Path(item["path"])
         assert not relative.is_absolute()

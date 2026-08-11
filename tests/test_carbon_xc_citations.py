@@ -6,7 +6,12 @@ from pathlib import Path
 import runpy
 
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "carbon_xc_comparison.py"
+EXAMPLE = (
+    Path(__file__).resolve().parents[1]
+    / "tools"
+    / "studies"
+    / "carbon_xc_comparison.py"
+)
 
 
 def test_comparison_writes_machine_and_human_readable_xc_citations(

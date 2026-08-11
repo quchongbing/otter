@@ -134,9 +134,9 @@
     "project": "Otter",
     "script_relative_path": "docs/examples/plot_carbon_ionization_levels.py",
     "script_sha256_at_generation": "f5134476efe8950859417eed12a41d54daaa6ab0d73534b90459ab38ccd30a12",
-    "script_sha256_current": "ea15c07554235af0c1e9716cadc8c7c9fb69d78087c866aa6d638241c1cd6fd9",
+    "script_sha256_current": "838bdb01b9f124fcd99ac684f1e7546764e058440539edae487177da37d12784",
     "worktree_clean_at_generation": false,
-    "provenance_limitation": "The archive contains the previously accepted 62-state v3 4096-point production scan plus ten fresh Otter solves at 1--3 g cm^-3. All 72 states use the same bound_occ_mode=fd, continuum-edge convention, and shell-Qion diagnostic. The high-density endpoint is 450 g cm^-3. The prior 500 g cm^-3 point is absent because its 4096-point production-FD solve did not converge and no diagnostic fd_m value was substituted. The archive was generated in a dirty development worktree; data and producer checksums provide integrity, but this is not a clean-commit source reconstruction."
+    "provenance_limitation": "The 72-state, 4096-point archive uses bound_occ_mode=fd, one continuum-edge convention, and one shell-Qion diagnostic. It ends at 450 g cm^-3; the 500 g cm^-3 production-FD solve did not converge. Data and producer checksums identify the uncommitted calculation state."
   },
   "units": {
     "mass_density": "g cm^-3",

@@ -1,4 +1,4 @@
-"""Tests for Otter's optional, publication-figure styling helpers."""
+"""Tests for Otter's publication-figure styling helpers."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 import pytest
 
 
-matplotlib = pytest.importorskip("matplotlib")
+import matplotlib
 matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 
@@ -29,7 +29,7 @@ from otter.plotting import (
 
 
 def test_importing_core_otter_does_not_import_matplotlib() -> None:
-    """The optional plotting stack must not become a core dependency."""
+    """Importing the numerical API should not initialize Matplotlib."""
     repository_root = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(repository_root / "src")

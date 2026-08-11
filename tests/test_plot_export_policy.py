@@ -11,6 +11,8 @@ PLOT_SOURCE_DIRECTORIES = (
     ROOT / "benchmarks" / "runners",
     ROOT / "docs" / "examples",
     ROOT / "examples",
+    ROOT / "tools" / "diagnostics",
+    ROOT / "tools" / "studies",
 )
 DIAGNOSTIC_TESTS = (
     "test_continuum_quantum_free.py",

@@ -35,10 +35,10 @@
     "git_commit": "13a307ea8f56f886e8919da5821d040909143432",
     "worktree_dirty": true,
     "script_sha256_at_calculation": "2b6793461dcb957fe8b6ce57533c784a8c95acd20fc26afb1d7ad8a645e01d29",
-    "current_controller_sha256": "adcd3993e1a7ff7fbc86fa850d992e2b6a88ad5b0fd2d6ad74575682072faae3",
+    "current_controller_sha256": "5ed0e975852b108ad12cc96ba68e1338ed4a672702bde76e44edc541a695ce56",
     "workflows_sha256_at_calculation": "30f7a13fd5924793955ec8690c55bf0afde9051722fd9081618adf475f9faca0",
     "status": "three_states_accepted",
-    "note": "The 30 eV state was recalculated after connecting the existing raw potential-strength continuation and Newton-Krylov backend to the one-component workflow. The dirty calculation worktree is identified by exact controller and workflows.py SHA-256 values rather than falsely described as committed."
+    "note": "The 30 eV state uses raw potential-strength continuation and the Newton-Krylov backend. Exact controller and workflows.py SHA-256 values identify the uncommitted calculation state."
   },
   "configuration": {
     "electronic_model": "qm",

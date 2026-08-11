@@ -5,9 +5,8 @@ This benchmark compares Otter with local numerical extractions from
 :cite:t:`StarrettSaumon2014`, *High Energy Density Physics* **10**, 35--42
 (2014), `doi:10.1016/j.hedp.2013.12.001
 <https://doi.org/10.1016/j.hedp.2013.12.001>`__
-(PII ``S1574181813001900``). Published values are open circles; accepted
-Starrett TF values are open circles; accepted Otter QM and TF calculations are
-solid blue and dashed orange lines.
+(PII ``S1574181813001900``). Starrett TF values are open circles; accepted
+Otter QM and TF calculations are solid blue and dashed orange lines.
 
 The directly executable program contains the state definitions, public
 :class:`~otter.PlasmaWorkflowConfig` calls, strict reliability gates,
