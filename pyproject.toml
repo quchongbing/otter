@@ -52,10 +52,10 @@ sphinx-gallery = "*"
 sphinxcontrib-bibtex = "*"
 
 [project.urls]
-Homepage = "https://github.com/quchongbing/otter"
-Documentation = "https://quchongbing.github.io/otter/"
-Repository = "https://github.com/quchongbing/otter"
-Issues = "https://github.com/quchongbing/otter/issues"
+Homepage = "https://github.com/otter-hed/otter"
+Documentation = "https://otter-hed.github.io/otter/"
+Repository = "https://github.com/otter-hed/otter"
+Issues = "https://github.com/otter-hed/otter/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

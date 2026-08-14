@@ -8,7 +8,7 @@ examples, benchmark manifests, and generated HTML.
 
 If you use Otter in a scientific publication, please cite Chongbing
 Qu, *Otter*, version 0.2.1, computer software (2026),
-https://github.com/quchongbing/otter.
+https://github.com/otter-hed/otter.
 
 Model references record scientific provenance; they are not additional
 software-citation requirements.

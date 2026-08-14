@@ -8,7 +8,7 @@ Run the introductory aluminium workflow in a browser:
 
 .. raw:: html
 
-   <p><a href="https://colab.research.google.com/github/quchongbing/otter/blob/main/notebooks/00-otter_intro.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></p>
+   <p><a href="https://colab.research.google.com/github/otter-hed/otter/blob/main/notebooks/00-otter_intro.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></p>
 
 Single-species aluminium
 ------------------------

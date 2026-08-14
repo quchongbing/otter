@@ -8,7 +8,7 @@ date-released: 2026-08-14
 authors:
   - family-names: Qu
     given-names: Chongbing
-repository-code: https://github.com/quchongbing/otter
+repository-code: https://github.com/otter-hed/otter
 license: BSD-3-Clause
 keywords:
   - average atom
@@ -26,4 +26,4 @@ preferred-citation:
   authors:
     - family-names: Qu
       given-names: Chongbing
-  repository-code: https://github.com/quchongbing/otter
+  repository-code: https://github.com/otter-hed/otter

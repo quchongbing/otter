@@ -43,7 +43,7 @@ poetry --version
 Clone and install:
 
 ```bash
-git clone https://github.com/quchongbing/otter.git
+git clone https://github.com/otter-hed/otter.git
 cd otter
 poetry install
 ```
@@ -63,20 +63,20 @@ poetry install --extras libxc
 
 PyPI distributes the Libxc Python bindings as source, so this optional step
 requires CMake and a C compiler. See the
-[XC installation guide](https://quchongbing.github.io/otter/user_guide/xc_functionals.html#installation).
+[XC installation guide](https://otter-hed.github.io/otter/user_guide/xc_functionals.html#installation).
 
 ```console
 poetry run python -c "import otter; print(otter.__version__)"
 ```
 
 An unlocked fallback is `python -m pip install -e .`. See the
-[installation guide](https://quchongbing.github.io/otter/installing.html).
+[installation guide](https://otter-hed.github.io/otter/installing.html).
 
 ## Quick start
 
 Run an introductory calculation in Google Colab:
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/quchongbing/otter/blob/main/notebooks/00-otter_intro.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/otter-hed/otter/blob/main/notebooks/00-otter_intro.ipynb)
 
 Run the complete [single-species workflow](examples/single_species_workflow.py)
 from the repository root:
@@ -157,7 +157,7 @@ requirements and [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 If you use Otter in a scientific publication, please cite:
 
 > Chongbing Qu, *Otter*, version 0.2.1, computer software (2026),
-> [https://github.com/quchongbing/otter](https://github.com/quchongbing/otter).
+> [https://github.com/otter-hed/otter](https://github.com/otter-hed/otter).
 
 ```bibtex
 @misc{Qu2026Otter,
@@ -165,7 +165,7 @@ If you use Otter in a scientific publication, please cite:
   title   = {Otter},
   year    = {2026},
   note    = {Computer software, version 0.2.1},
-  url     = {https://github.com/quchongbing/otter}
+  url     = {https://github.com/otter-hed/otter}
 }
 ```
 

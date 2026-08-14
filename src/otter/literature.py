@@ -367,7 +367,7 @@ def write_citations_markdown(path: str | Path = "CITATIONS.md") -> Path:
         "",
         "If you use Otter in a scientific publication, please cite Chongbing",
         f"Qu, *Otter*, version {__version__}, computer software (2026),",
-        "https://github.com/quchongbing/otter.",
+        "https://github.com/otter-hed/otter.",
         "",
         "Model references record scientific provenance; they are not additional",
         "software-citation requirements.",

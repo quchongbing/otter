@@ -42,7 +42,7 @@ Clone the repository and install from the lock file:
 
 .. code-block:: console
 
-   $ git clone https://github.com/quchongbing/otter.git
+   $ git clone https://github.com/otter-hed/otter.git
    $ cd otter
    $ poetry install
 
