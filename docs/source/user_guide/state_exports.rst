@@ -7,6 +7,12 @@ is set, the QOZ/HNC result.  The same state can be written as a portable NPZ
 archive.  NPZ files contain only numeric arrays and fixed-width strings and
 are loaded with ``allow_pickle=False``.
 
+Notation on this page distinguishes the electron channels
+:math:`V_{Ie}` and :math:`V_{ee}` from the effective ion--ion pair potential
+:math:`V_{ab}`, where :math:`a,b` label ionic species.  The Python keys
+``vij_k`` and ``vij_r`` retain ``ij`` for compatibility, but both of their
+leading axes are ionic-species axes; they are not electron--ion potentials.
+
 This page describes the portable workflow-state schema
 ``otter_state_v3``.  Benchmark baselines may instead use compact,
 benchmark-specific schemas because one archive can contain several model or
@@ -63,7 +69,8 @@ For a single species:
    C_ee = ion["c_ee_k"]
    V_ie_r = ion["v_ie_r"]
    V_ee_r = ion["v_ee_r"]
-   V_ii = ion["vij_k"][0, 0]
+   V_ii_k = ion["vij_k"][0, 0]
+   V_ii_r = ion["vij_r"][0, 0]
    g_ii = ion["gij_r"][0, 0]
    S_ii = ion["sij_k"][0, 0]
 
@@ -106,7 +113,7 @@ validation is not required:
        q = archive["q_k"]
        G = archive["g_ee_k"]
        V_ee = archive["v_ee_k"]
-       V_ij = archive["vij_k"]
+       V_ab = archive["vij_k"]
        S = archive["sij_k"]
 
 By default the archive retains :math:`r < 20\,a_{\rm B}` and
@@ -179,7 +186,8 @@ common reciprocal points:
      - Finite-DST real-space direct-correlation channels.
    * - ``vij_r``, ``vij_k``
      - ``(N_s, N_s, N_r/k)``
-     - Effective ion--ion pair potentials.
+     - Effective ion--ion pair potentials :math:`V_{ab}(r)` and
+       :math:`V_{ab}(k)`; :math:`a,b` are ionic-species indices.
    * - ``gij_r``, ``hij_r``, ``cij_r``
      - ``(N_s, N_s, N_r)``
      - Pair, total-correlation, and ion direct-correlation functions.

@@ -31,7 +31,7 @@ Capabilities
 * pseudoatom densities :math:`n_{\mathrm{ion}}(r)` and
   :math:`n_{\mathrm{scr}}(r)`, with form factors
   :math:`f(k)=n_{\mathrm{ion}}(k)` and :math:`q(k)=n_{\mathrm{scr}}(k)`;
-* effective ion--ion potentials :math:`V_{ij}(r)` and :math:`V_{ij}(k)`;
+* effective ion--ion potentials :math:`V_{ab}(r)` and :math:`V_{ab}(k)`;
 * one- and multicomponent QOZ/HNC results :math:`g_{ij}(r)` and
   :math:`S_{ij}(k)`.
 

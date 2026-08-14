@@ -33,12 +33,13 @@ Workflow results and state files
    <../user_guide/state_exports>` is the canonical field reference.  It gives
    in-memory and NPZ examples, species/pair indexing, shapes, units, metadata,
    electronic profiles and levels, :math:`q(k)`, :math:`f(k)`, response and
-   LFC arrays, :math:`V_{Ie}(k)`, :math:`V_{ee}(k)`, :math:`V_{ij}(k)`,
-   :math:`g_{ij}(r)`, and :math:`S_{ij}(k)`.
+   LFC arrays, :math:`V_{Ie}(k)`, :math:`V_{ee}(k)`, :math:`V_{ab}(k)`,
+   :math:`g_{ab}(r)`, and :math:`S_{ab}(k)`, where :math:`a,b` label ionic
+   species.
 
 The stable state-file interface stores the native average-atom profiles and
 levels together with :math:`q(k)`, :math:`f(k)`, electron response and LFC,
-interaction channels, :math:`V_{ij}`, :math:`g_{ij}`, and :math:`S_{ij}`
+interaction channels, :math:`V_{ab}`, :math:`g_{ab}`, and :math:`S_{ab}`
 without pickled Python objects.
 
 .. currentmodule:: otter.io.state
