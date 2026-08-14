@@ -28,7 +28,7 @@ software conventions.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import re
 import time
@@ -37,6 +37,7 @@ from typing import Any
 import numpy as np
 
 from otter.numerics.constants import EV_TO_HA
+from otter._version import __version__
 from otter.numerics.grids import create_linear_grid
 from otter.data.elements import element as element_info
 from otter.literature import (
@@ -52,12 +53,14 @@ from otter.ionic import (
     build_effective_vij_from_nscr,
     enforce_screening_charge_consistency,
     enforce_screening_charge_consistency_many,
+    electron_interaction_channels_k,
     hnc_solver,
     hnc_solver_multicomponent_continuation,
     precompute_dst_lattice_transform_like,
     qoz_zbar_from_nscr,
     radial_charge_trapezoid,
     radial_forward,
+    radial_inverse,
 )
 
 from otter.electronic.full_external import FullExternalConfig, solve_full_then_external
@@ -239,10 +242,31 @@ def _build_qoz_linear_grid(
 
 
 def _species_parallel_jobs_default(cfg: "PlasmaWorkflowConfig", n_species: int) -> int:
-    """Resolve the species-level parallel worker count."""
+    """Use one worker per species unless the caller requests another count."""
     if cfg.species_parallel_jobs is not None:
         return int(cfg.species_parallel_jobs)
     return max(int(n_species), 1) if int(n_species) > 1 else 1
+
+
+def _qoz_electron_channels(
+    qoz: Any,
+    *,
+    k: np.ndarray,
+    electron_temperature_ha: float,
+    ion_temperature_ha: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Read public QOZ electron channels, reconstructing legacy test doubles."""
+    required = ("v_ie_k", "v_ee_k", "c_ie_k", "c_ee_k")
+    if all(hasattr(qoz, key) for key in required):
+        return tuple(np.asarray(getattr(qoz, key), dtype=float) for key in required)  # type: ignore[return-value]
+    return electron_interaction_channels_k(
+        k=np.asarray(k, dtype=float),
+        n_scr_k=np.asarray(qoz.n_scr_k, dtype=float),
+        chi_ee_k=np.asarray(qoz.chi_ee_k, dtype=float),
+        gee_k=np.asarray(qoz.gee_k, dtype=float),
+        electron_temperature_ha=electron_temperature_ha,
+        ion_temperature_ha=ion_temperature_ha,
+    )
 
 
 def _single_species_entry(
@@ -365,12 +389,23 @@ class PlasmaWorkflowConfig(CitationMixin):
         requests it here.
     species_overrides
         Optional per-species AA overrides for mixture runs.
+    species_parallel_jobs
+        Number of species AA solves evaluated concurrently. ``None`` selects
+        one worker per species; use ``1`` for ordered diagnostic output.
     allow_unconverged_root
         Permit explicit diagnostic best-effort mixture output. By default an
         unconverged common-mu state is rejected before QOZ/HNC.
     allow_unconverged_aa
         Permit explicit diagnostic ion-structure continuation from a failed
         final full or external AA stage. The production default rejects it.
+    show_progress
+        Print the compact workflow report and SCF ``d_n``/``d_v`` trace.
+    debug
+        Add charge, continuum, tail, mixer, and timing diagnostics to the
+        compact report.
+    save_state_npz
+        Save the converged electronic, pseudoatom, response, potential, and
+        QOZ/HNC arrays as a portable NPZ state.
     """
 
     temperature_ev: float
@@ -397,22 +432,26 @@ class PlasmaWorkflowConfig(CitationMixin):
     root_maxfev: int = 20
     root_brent_maxiter: int = 16
     root_threshold_b3_surrogate_mode: str = "a_only_when_full_unresolved"
+    root_threshold_refine_retry: bool = True
     allow_unconverged_root: bool = False
     allow_unconverged_aa: bool = False
     volume_weights_init: list[float] | tuple[float, ...] | None = None
     species_parallel_jobs: int | None = None
+    # None selects one worker per mixture species; set 1 for ordered diagnostics.
     species_parallel_backend: str = "thread"
 
-    show_progress: bool = False
+    show_progress: bool = True
     show_mu_progress: bool = False
+    debug: bool = False
+    # ``verbose`` is retained as a compatibility alias for ``debug``.
     verbose: bool = False
 
     save_data: bool = False
     save_output_dir: str | Path = "outputs"
     save_suffix: str = ""
     save_state_npz: bool = False
-    # Save the portable q(k), f(k), gij(r), Sij(k) state contract after a
-    # successful ion-structure calculation.
+    # Save the portable electronic/pseudoatom/QOZ/HNC state after a successful
+    # ion-structure calculation.
     save_state_path: str | Path | None = None
     state_r_max_bohr: float = 20.0
     state_k_max_bohr_inv: float = 20.0
@@ -606,6 +645,10 @@ class PlasmaWorkflowConfig(CitationMixin):
         ]
         return tuple(dict.fromkeys(keys))
 
+    def solve(self) -> dict[str, Any]:
+        """Run this configuration through :func:`solve_plasma_workflow`."""
+        return solve_plasma_workflow(self)
+
 
 def _solve_electronic_structure(
     cfg: PlasmaWorkflowConfig,
@@ -670,6 +713,8 @@ def _solve_electronic_structure(
             rho_g_cc=float(cfg.rho_g_cc),
             run_mode=str(cfg.run_mode),
             show_scf_progress=bool(cfg.show_progress),
+            show_summary=bool(cfg.show_progress),
+            debug=bool(cfg.debug or cfg.verbose),
             verbose=bool(cfg.verbose),
             save_data=bool(cfg.save_data),
             save_output_dir=cfg.save_output_dir,
@@ -692,12 +737,14 @@ def _solve_electronic_structure(
         root_threshold_b3_surrogate_mode=str(
             cfg.root_threshold_b3_surrogate_mode
         ),
+        root_threshold_refine_retry=bool(cfg.root_threshold_refine_retry),
         allow_unconverged_root=bool(cfg.allow_unconverged_root),
         volume_weights_init=(
             None if cfg.volume_weights_init is None else [float(val) for val in cfg.volume_weights_init]
         ),
         show_progress=bool(cfg.show_progress),
         show_mu_progress=bool(cfg.show_mu_progress),
+        debug=bool(cfg.debug or cfg.verbose),
         verbose=bool(cfg.verbose),
         final_run_mode=str(cfg.run_mode),
         species_parallel_jobs=_species_parallel_jobs_default(cfg, len(symbols)),
@@ -785,6 +832,13 @@ def _one_component_ion_structure(
         r_dst=r,
         right_value=0.0,
     )
+    n_ion_r = _interp_profile_linear(
+        r_src=r_src,
+        y_src=np.asarray(final["n_ion"], dtype=float),
+        r_dst=r,
+        right_value=0.0,
+    )
+    n_ion_k = np.asarray(radial_forward(n_ion_r, transform), dtype=float)
     charge_fix = enforce_screening_charge_consistency(
         r,
         n_scr,
@@ -813,6 +867,16 @@ def _one_component_ion_structure(
             ),
         ),
     )
+    v_ie_k, v_ee_k, c_ie_k, c_ee_k = _qoz_electron_channels(
+        qoz,
+        k=k,
+        electron_temperature_ha=float(cfg.temperature_ev) * EV_TO_HA,
+        ion_temperature_ha=ion_temperature_ha,
+    )
+    v_ie_r = np.asarray(radial_inverse(v_ie_k, transform), dtype=float)
+    v_ee_r = np.asarray(radial_inverse(v_ee_k, transform), dtype=float)
+    c_ie_r = np.asarray(radial_inverse(c_ie_k, transform), dtype=float)
+    c_ee_r = np.asarray(radial_inverse(c_ee_k, transform), dtype=float)
     qoz_build_s = time.perf_counter() - t_qoz
     t_hnc = time.perf_counter()
     direct_mixing_scheme = (
@@ -1017,6 +1081,10 @@ def _one_component_ion_structure(
         "k": k,
         "n_scr_r": np.asarray(charge_fix.n_scr_r, dtype=float),
         "n_scr_k": np.asarray(qoz.n_scr_k, dtype=float),
+        "q_k": np.asarray(qoz.n_scr_k, dtype=float),
+        "n_ion_r": n_ion_r,
+        "n_ion_k": n_ion_k,
+        "f_k": n_ion_k,
         "screening_density_source": str(screening_density_source),
         "zbar": float(zbar_qoz),
         "zbar_qoz": float(zbar_qoz),
@@ -1040,9 +1108,20 @@ def _one_component_ion_structure(
         "vii_k": np.asarray(qoz.vii_k, dtype=float),
         "vij_r": vij_r,
         "vij_k": vij_k,
+        "v_ie_k": np.asarray(v_ie_k, dtype=float),
+        "v_ei_k": np.asarray(v_ie_k, dtype=float),
+        "v_ee_k": np.asarray(v_ee_k, dtype=float),
+        "c_ie_k": np.asarray(c_ie_k, dtype=float),
+        "c_ee_k": np.asarray(c_ee_k, dtype=float),
+        "v_ie_r": v_ie_r,
+        "v_ei_r": v_ie_r,
+        "v_ee_r": v_ee_r,
+        "c_ie_r": c_ie_r,
+        "c_ee_r": c_ee_r,
         "chi_ee_k": np.asarray(qoz.chi_ee_k, dtype=float),
         "chi0_k": np.asarray(qoz.chi0_k, dtype=float),
         "gee_k": np.asarray(qoz.gee_k, dtype=float),
+        "g_ee_k": np.asarray(qoz.gee_k, dtype=float),
         "qoz_build_s": float(qoz_build_s),
         "hnc_solve_s": float(hnc_solve_s),
         "hnc_iters": int(len(residual_history)),
@@ -1111,6 +1190,7 @@ def _multicomponent_ion_structure(
 
     n_species = len(species_entries)
     n_scr = np.zeros((n_species, r.size), dtype=float)
+    n_ion_r = np.zeros((n_species, r.size), dtype=float)
     zbar = np.zeros(n_species, dtype=float)
     zbar_partition = np.zeros(n_species, dtype=float)
     q_scr_native_raw = np.zeros(n_species, dtype=float)
@@ -1131,6 +1211,12 @@ def _multicomponent_ion_structure(
         n_scr[idx] = _interp_profile_linear(
             r_src=r_native,
             y_src=n_scr_native,
+            r_dst=r,
+            right_value=0.0,
+        )
+        n_ion_r[idx] = _interp_profile_linear(
+            r_src=r_native,
+            y_src=np.asarray(final["n_ion"], dtype=float),
             r_dst=r,
             right_value=0.0,
         )
@@ -1175,6 +1261,7 @@ def _multicomponent_ion_structure(
         renormalize=bool(cfg.qoz_renormalize_nscr_to_zbar),
         transform=transform,
     )
+    n_ion_k = np.asarray(radial_forward(n_ion_r, transform), dtype=float)
     ion_temperature_ha = float(cfg.ion_temperature_ev) * EV_TO_HA
     t_qoz = time.perf_counter()
     qoz = build_effective_vij_from_nscr(
@@ -1196,6 +1283,16 @@ def _multicomponent_ion_structure(
             ),
         ),
     )
+    v_ie_k, v_ee_k, c_ie_k, c_ee_k = _qoz_electron_channels(
+        qoz,
+        k=k,
+        electron_temperature_ha=float(cfg.temperature_ev) * EV_TO_HA,
+        ion_temperature_ha=ion_temperature_ha,
+    )
+    v_ie_r = np.asarray(radial_inverse(v_ie_k, transform), dtype=float)
+    v_ee_r = np.asarray(radial_inverse(v_ee_k, transform), dtype=float)
+    c_ie_r = np.asarray(radial_inverse(c_ie_k, transform), dtype=float)
+    c_ee_r = np.asarray(radial_inverse(c_ee_k, transform), dtype=float)
     qoz_build_s = time.perf_counter() - t_qoz
     t_hnc = time.perf_counter()
     g_r, s_k, h_r, c_r, residual_history, stage_meta = hnc_solver_multicomponent_continuation(
@@ -1273,6 +1370,10 @@ def _multicomponent_ion_structure(
         "k": k,
         "n_scr_r": np.asarray(charge_fix.n_scr_r, dtype=float),
         "n_scr_k": np.asarray(qoz.n_scr_k, dtype=float),
+        "q_k": np.asarray(qoz.n_scr_k, dtype=float),
+        "n_ion_r": n_ion_r,
+        "n_ion_k": n_ion_k,
+        "f_k": n_ion_k,
         "screening_density_source": list(screening_density_source),
         "zbar": np.asarray(zbar, dtype=float),
         "zbar_qoz": np.asarray(zbar, dtype=float),
@@ -1292,9 +1393,20 @@ def _multicomponent_ion_structure(
         "cij_r": np.asarray(c_r, dtype=float),
         "vij_r": np.asarray(qoz.vij_r, dtype=float),
         "vij_k": np.asarray(qoz.vij_k, dtype=float),
+        "v_ie_k": np.asarray(v_ie_k, dtype=float),
+        "v_ei_k": np.asarray(v_ie_k, dtype=float),
+        "v_ee_k": np.asarray(v_ee_k, dtype=float),
+        "c_ie_k": np.asarray(c_ie_k, dtype=float),
+        "c_ee_k": np.asarray(c_ee_k, dtype=float),
+        "v_ie_r": v_ie_r,
+        "v_ei_r": v_ie_r,
+        "v_ee_r": v_ee_r,
+        "c_ie_r": c_ie_r,
+        "c_ee_r": c_ee_r,
         "chi_ee_k": np.asarray(qoz.chi_ee_k, dtype=float),
         "chi0_k": np.asarray(qoz.chi0_k, dtype=float),
         "gee_k": np.asarray(qoz.gee_k, dtype=float),
+        "g_ee_k": np.asarray(qoz.gee_k, dtype=float),
         "qoz_build_s": float(qoz_build_s),
         "hnc_solve_s": float(hnc_solve_s),
         "hnc_iters": int(len(residual_history)),
@@ -1353,24 +1465,80 @@ def solve_plasma_workflow(cfg: PlasmaWorkflowConfig) -> dict[str, Any]:
     -------
     dict
         Top-level payload containing parsed composition, electronic structure,
-        and optional ion-structure outputs.
+        and optional ion-structure outputs.  When the ion stage is requested,
+        ``result["ion"]`` includes ``v_ie_k`` (with ``v_ei_k`` as an alias),
+        ``v_ee_k``, ``c_ie_k``, and ``c_ee_k`` on the returned ``k`` grid.
     """
+    started = time.perf_counter()
     symbols, counts = resolve_plasma_composition(
         formula=cfg.formula,
         elements=cfg.elements,
         counts=cfg.counts,
         number_fraction=cfg.number_fraction,
     )
+    report = bool(cfg.show_progress or cfg.show_mu_progress or cfg.debug or cfg.verbose)
+    if report:
+        composition = (
+            symbols[0]
+            if len(symbols) == 1
+            else " ".join(
+                f"{symbol}:{float(count):g}"
+                for symbol, count in zip(symbols, counts)
+            )
+        )
+        ti = (
+            "--"
+            if cfg.ion_temperature_ev is None
+            else f"{float(cfg.ion_temperature_ev):g} eV"
+        )
+        electronic_label = str(cfg.electronic_model).upper()
+        calculation = (
+            f"{electronic_label} electronic structure"
+            if cfg.ion_temperature_ev is None
+            else f"{electronic_label} -> QOZ/HNC"
+        )
+        print(f"Otter {__version__}")
+        print(
+            f"[run] {composition} | rho={float(cfg.rho_g_cc):g} g/cm^3 | "
+            f"Te={float(cfg.temperature_ev):g} eV | Ti={ti} | {calculation}"
+        )
+
     electronic_kind, electronic_result = _solve_electronic_structure(
         cfg,
         symbols=symbols,
         counts=counts,
     )
-    return continue_plasma_workflow_from_electronic_result(
+    if report and str(electronic_kind) == "mixture":
+        print(
+            "[mixture] "
+            f"mu={float(electronic_result.get('mu_common_ha', np.nan)):.8f} Ha"
+        )
+        for species in electronic_result.get("species", []):
+            species_result = species.get("result", {})
+            print(
+                "[mixture] "
+                f"{species.get('element', '?')}: "
+                f"Rws={float(species.get('r_ws_bohr', np.nan)):.6f} Bohr  "
+                f"Zbar={float(species_result.get('zbar', np.nan)):.8f}"
+            )
+    result = continue_plasma_workflow_from_electronic_result(
         cfg,
         electronic_kind=electronic_kind,
         electronic_result=electronic_result,
     )
+    elapsed = time.perf_counter() - started
+    result["runtime_s"] = float(elapsed)
+    if report:
+        ion = result.get("ion")
+        if isinstance(ion, dict):
+            print(
+                "[ion] "
+                f"HNC iterations={int(ion.get('hnc_iters', 0))}  "
+                f"QOZ={float(ion.get('qoz_build_s', 0.0)):.3f} s  "
+                f"HNC={float(ion.get('hnc_solve_s', 0.0)):.3f} s"
+            )
+        print(f"[done] total time={elapsed:.3f} s")
+    return result
 
 
 def continue_plasma_workflow_from_electronic_result(
@@ -1471,6 +1639,7 @@ def continue_plasma_workflow_from_electronic_result(
             )
 
     result = {
+        "otter_version": __version__,
         "formula": (None if cfg.formula is None else str(cfg.formula)),
         "species_symbols": list(symbols),
         "species_counts": [float(val) for val in counts],
@@ -1484,6 +1653,8 @@ def continue_plasma_workflow_from_electronic_result(
             "result": electronic_result,
         },
         "ion": ion_result,
+        "configuration": asdict(cfg),
+        "citation_keys": list(cfg.citation_keys),
     }
     saved_paths = electronic_result.get("saved_paths", None)
     if saved_paths is not None:

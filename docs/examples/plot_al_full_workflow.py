@@ -55,9 +55,7 @@ RHO_G_CC = 8.1
 TE_EV = 1.0
 TI_EV = 1.0
 
-AA_N_POINTS = 1024
 CONTINUUM_WORKERS = 4
-QOZ_N_POINTS = 4096
 HNC_TOL = 1.0e-6
 HNC_CLOSURE_TOL = 1.0e-3
 # =============================================================================
@@ -127,29 +125,13 @@ def workflow_config() -> PlasmaWorkflowConfig:
         temperature_ev=TE_EV,
         ion_temperature_ev=TI_EV,
         rho_g_cc=RHO_G_CC,
-        electronic_model="qm",
         aa_overrides={
-            "n_points": AA_N_POINTS,
             "cont_n_jobs": CONTINUUM_WORKERS,
             "cont_shards": 2 * CONTINUUM_WORKERS,
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": True,
-            "bound_zero_tail_max_binding_ha": 1.0e-2,
-            "bound_zero_tail_scan_points": 64,
-            "bound_zero_tail_edge_rel_tol": 0.1,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
         show_progress=True,
     )
 
@@ -241,13 +223,13 @@ def pack_workflow(
                 {
                     "electronic_model": "qm",
                     "structure_model": "IS",
-                    "aa_n_points": AA_N_POINTS,
+                    "aa_n_points": 4096,
                     "continuum_workers": CONTINUUM_WORKERS,
                     "bound_occ_mode": "fd",
                     "bound_rmax_mult": None,
-                    "bound_zero_tail_refine": True,
+                    "bound_zero_tail_refine": False,
                     "b3_tail_model": "full",
-                    "qoz_n_points": QOZ_N_POINTS,
+                    "qoz_n_points": 4096,
                     "chi0_model": "lindhard_fd",
                     "lfc_model": "chabrier1990",
                     "hnc_tol": HNC_TOL,
@@ -426,15 +408,16 @@ with style_context("thesis", palette="bing"):
     ) = plt.subplots(
         1,
         3,
-        figsize=grid_figsize(1, 3, cell_width=4.15, cell_height=3.75),
+        figsize=grid_figsize(1, 3),
     )
     density_curves = (
-        ("n_full_bohr3", r"$n_{\rm full}$"),
-        ("n_free_bohr3", r"$n_{\rm free}$"),
-        ("n_bound_bohr3", r"$n_{\rm ion}$"),
-        ("n_ext_bohr3", r"$n_{\rm ext}$"),
-        ("n_pa_bohr3", r"$n_{\rm PA}$"),
-        ("n_scr_bohr3", r"$n_{\rm scr}$"),
+        ("n_full_bohr3", r"$n^{\rm full}$"),
+        ("n_free_bohr3", r"$n^{\rm free}$"),
+        ("n_bound_bohr3", r"$n^{\rm ion}$"),
+        ("n_ext_bohr3", r"$n^{\rm ext}$"),
+        ("n_pa_bohr3", r"$n^{\rm PA}$"),
+        ("n_scr_bohr3", r"$n^{\rm scr}$"),
+        ("n0_bohr3", r"$n_0$"),
     )
     for key, label in density_curves:
         ax_density.plot(
@@ -474,7 +457,7 @@ with style_context("thesis", palette="bing"):
     ax_potential.set(
         xlabel=r"$r$ [Bohr]",
         ylabel=r"$V(r)$ [Ha]",
-        xlim=(-0.5, 8.0),
+        xlim=(-0.5, 5.0),
         ylim=(-1.0, 1.0),
         title="Effective potentials",
     )
@@ -553,7 +536,7 @@ with style_context("thesis", palette="bing"):
     fig_pipeline, axes = plt.subplots(
         2,
         3,
-        figsize=grid_figsize(2, 3, cell_width=3.7, cell_height=3.25),
+        figsize=grid_figsize(2, 3),
     )
     ax_f, ax_q, ax_vk, ax_vr, ax_g, ax_s = axes.ravel()
 
@@ -564,12 +547,6 @@ with style_context("thesis", palette="bing"):
         ylabel="electrons",
     )
 
-    ax_q.plot(
-        k[k_mask],
-        np.asarray(state["n_scr_k_raw_electrons"])[k_mask],
-        ls="--",
-        label=r"$q_{\rm raw}$",
-    )
     ax_q.plot(
         k[k_mask],
         np.asarray(state["n_scr_k_electrons"])[k_mask],
@@ -640,7 +617,7 @@ with style_context("thesis", palette="bing"):
         rf"$T_e=T_i={float(state['te_ev']):g}$ eV"
     )
 
-    fig_density, ax_density_slide = plt.subplots(figsize=(6.6, 4.2))
+    fig_density, ax_density_slide = plt.subplots(figsize=grid_figsize(1, 1))
     for key, label in density_curves:
         ax_density_slide.plot(
             r_e[mask_e],
@@ -666,7 +643,7 @@ with style_context("thesis", palette="bing"):
         close=True,
     )
 
-    fig_gii, ax_gii_slide = plt.subplots(figsize=(6.6, 4.2))
+    fig_gii, ax_gii_slide = plt.subplots(figsize=grid_figsize(1, 1))
     ax_gii_slide.plot(r[r_mask], np.asarray(state["gii_r"])[r_mask])
     ax_gii_slide.axhline(1.0, color="0.5", lw=0.9, ls=":")
     ax_gii_slide.set(
@@ -678,7 +655,7 @@ with style_context("thesis", palette="bing"):
     fig_gii.tight_layout()
     save_figure(fig_gii, FIGURE_DIR / "al_full_workflow_gii", close=True)
 
-    fig_sii, ax_sii_slide = plt.subplots(figsize=(6.6, 4.2))
+    fig_sii, ax_sii_slide = plt.subplots(figsize=grid_figsize(1, 1))
     ax_sii_slide.plot(k[k_mask], np.asarray(state["sii_k"])[k_mask])
     ax_sii_slide.axhline(1.0, color="0.5", lw=0.9, ls=":")
     ax_sii_slide.set(

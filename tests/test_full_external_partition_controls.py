@@ -15,12 +15,15 @@ import numpy as np
 from otter.electronic.ks_dft import (
     KSDTFConfig,
     _bound_density,
+    _bound_orbital_density_tables,
     _bound_ion_charge_table,
     _electron_count,
     _ion_density,
 )
 from otter.electronic.full_external import (
     FullExternalConfig,
+    _auto_bound_basis_from_z,
+    _bound_basis_saturation,
     _bound_energy_cut_value,
     _build_bound_tables_and_dos,
     _build_continuum_params,
@@ -38,6 +41,51 @@ def test_average_atom_radial_defaults_are_4096_points() -> None:
         temperature_ev=100.0,
         rho_g_cc=2.0,
     ).n_points == 2**12
+
+
+def test_auto_bound_basis_covers_neutral_shells_through_z118() -> None:
+    """The automatic basis must cover every occupied neutral-atom subshell."""
+    expected = {
+        13: ([0, 1, 2], [4, 3, 1]),
+        26: ([0, 1, 2, 3], [5, 3, 2, 1]),
+        74: ([0, 1, 2, 3, 4], [7, 5, 4, 2, 1]),
+        118: ([0, 1, 2, 3, 4], [8, 7, 5, 3, 1]),
+    }
+    for z_nuc, (l_expected, caps_expected) in expected.items():
+        l_values, caps = _auto_bound_basis_from_z(z_nuc, n_pad=1, l_pad=1)
+        np.testing.assert_array_equal(l_values, l_expected)
+        np.testing.assert_array_equal(caps, caps_expected)
+
+
+def test_bound_basis_saturation_detects_radial_and_angular_truncation() -> None:
+    energies = np.asarray(
+        [
+            [-3.0, -0.4, np.inf],
+            [-1.0, np.inf, np.inf],
+            [-0.1, np.inf, np.inf],
+        ]
+    )
+    diagnostics = _bound_basis_saturation(
+        energies,
+        np.asarray([0, 1, 2]),
+        np.asarray([2, 2, 1]),
+    )
+    assert diagnostics == {
+        "saturated": True,
+        "radial_saturated_l": [0, 2],
+        "angular_saturated": True,
+    }
+
+    complete = _bound_basis_saturation(
+        np.asarray([[-3.0, np.inf], [-0.5, np.inf], [np.inf, np.inf]]),
+        np.asarray([0, 1, 2]),
+        np.asarray([2, 2, 1]),
+    )
+    assert complete == {
+        "saturated": False,
+        "radial_saturated_l": [],
+        "angular_saturated": False,
+    }
     assert ThomasFermiConfig(
         element="C",
         temperature_ev=100.0,
@@ -139,6 +187,56 @@ def test_shell_ion_charges_close_total_ion_density_and_degeneracy() -> None:
         atol=2.0e-14,
     )
     np.testing.assert_allclose(charges[1, 0] / charges[0, 0], 3.0)
+
+
+def test_orbital_density_tables_close_bound_and_ion_densities() -> None:
+    """Per-level exports must sum to the densities used by the AA model."""
+    r = np.linspace(1.0e-4, 4.0, 401)
+    energies = np.asarray(((-0.8, -0.1), (-0.3, np.inf)), dtype=float)
+    vectors = np.zeros((2, r.size, 2), dtype=float)
+    vectors[0, :, 0] = np.sqrt(r) * np.exp(-r)
+    vectors[0, :, 1] = np.sqrt(r) * np.exp(-0.4 * r)
+    vectors[1, :, 0] = np.sqrt(r) * r * np.exp(-0.7 * r)
+    angular = np.asarray((0, 1), dtype=int)
+    cutoff = 1.0 / (1.0 + np.exp((r - 2.0) / 0.1))
+    common = {
+        "mu": 0.1,
+        "temperature": 0.5,
+        "energy_cut": 0.0,
+        "gamma": 0.2,
+        "r_ws": 2.0,
+        "ws_weight_min": 0.0,
+    }
+    per_bound, per_ion = _bound_orbital_density_tables(
+        r,
+        energies,
+        vectors,
+        angular,
+        bound_occ_mode="fd",
+        cutoff=cutoff,
+        r_target=r,
+        **common,
+    )
+    expected_bound = _bound_density(
+        r,
+        energies,
+        vectors,
+        angular,
+        occ_mode="fd",
+        **{key: common[key] for key in (
+            "mu", "temperature", "energy_cut", "gamma", "r_ws", "ws_weight_min"
+        )},
+    )
+    expected_ion = _ion_density(
+        r,
+        energies,
+        vectors,
+        angular,
+        cutoff=cutoff,
+        **common,
+    )
+    np.testing.assert_allclose(np.sum(per_bound, axis=(0, 1)), expected_bound)
+    np.testing.assert_allclose(np.sum(per_ion, axis=(0, 1)), expected_ion)
 
 
 def test_bound_table_overlays_zero_tail_scf_spectrum(monkeypatch) -> None:

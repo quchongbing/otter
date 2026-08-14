@@ -2,14 +2,14 @@
   "schema_version": "otter_reference_manifest_v1",
   "reference_id": "johnson_et_al_2025_two_temperature_al",
   "title": "Johnson et al. (2025) two-temperature aluminium gii curves",
-  "origin_type": "publication_figure_numerical_extractions_provenance_pending",
+  "origin_type": "publication_figure_digitization_by_project_maintainer",
   "redistribution_status": "published_by_maintainer_with_attribution",
   "license_declared": "NOASSERTION",
   "public_release_gate": "resolved",
   "release_decision": {
     "decision_date": "2026-08-10",
     "decision_maker": "Otter project maintainer",
-    "scope": "the nine numerical reference files listed in this manifest",
+    "scope": "the twelve numerical reference files listed in this manifest",
     "policy": "publish with explicit article, figure-panel, and method attribution and license status NOASSERTION",
     "rights_note": "This records a repository-distribution decision and does not assert that APS or the authors supplied an open-data license."
   },
@@ -18,8 +18,7 @@
     "citation": "Z. A. Johnson, N. R. Shaffer, and M. S. Murillo, Physical Review E 112, 025207 (2025)",
     "doi": "10.1103/5c29-kdx1",
     "url": "https://doi.org/10.1103/5c29-kdx1",
-    "figure": "Fig. 2(a), Fig. 2(c), and Fig. 2(d)",
-    "omitted_panel": "Fig. 2(b), Te=3 eV, is not included in this reference package",
+    "figure": "Fig. 2(a)-2(d)",
     "data_availability": "Data are available from the corresponding author upon reasonable request."
   },
   "physical_state": {
@@ -41,8 +40,10 @@
     "YOCP": "YOCP HNC+bridge"
   },
   "extraction_provenance": {
-    "status": "unresolved",
-    "note": "The available files do not say whether the coordinates were author-provided or digitized from the published figure."
+    "status": "resolved",
+    "method": "digitized_from_publication_figure",
+    "performed_by": "Otter project maintainer",
+    "source": "Johnson et al. (2025), Fig. 2(a)-2(d)"
   },
   "files": [
     {
@@ -67,6 +68,30 @@
       "citation_key": "JohnsonEtAl2025",
       "panel": "Fig. 2(a)",
       "te_ev": 1.0,
+      "method": "YOCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te3.0_Ti1.0_AA.csv",
+      "sha256": "bd2d31fe28f0aa82223379d99f36e0556236ce98adab2d45904ae66793ce1bca",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(b)",
+      "te_ev": 3.0,
+      "method": "2TTCP HNC+bridge"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te3.0_Ti1.0_DFTMD.csv",
+      "sha256": "58c9961da704056ccca5aa6f84ecb09993770baca6080746895d2d10b5a2a9f4",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(b)",
+      "te_ev": 3.0,
+      "method": "DFT-MD"
+    },
+    {
+      "path": "Zak_2025_Al_rho2.7_Te3.0_Ti1.0_YOCP.csv",
+      "sha256": "af93e3c9dcaafd9dfb3cf06e901c90141856a62df314adec10dc7083411be8da",
+      "citation_key": "JohnsonEtAl2025",
+      "panel": "Fig. 2(b)",
+      "te_ev": 3.0,
       "method": "YOCP HNC+bridge"
     },
     {

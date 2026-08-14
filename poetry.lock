@@ -1477,6 +1477,25 @@ files = [
 windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
+name = "pylibxc7"
+version = "7.0.0"
+description = "PyLibxc is a python-bound C library of exchange and correlation functionals for density-functional (DFT) theory."
+optional = true
+python-versions = "*"
+groups = ["main"]
+markers = "extra == \"libxc\""
+files = [
+    {file = "pylibxc7-7.0.0.tar.gz", hash = "sha256:28e0c4a207672c5e7d95f0784173629194ad517e47d77bf0787dc82f8a28c5de"},
+]
+
+[package.dependencies]
+numpy = ">=1.7"
+
+[package.extras]
+docs = ["numpydoc", "sphinx (==1.2.3)", "sphinx_rtd_theme", "sphinxcontrib-napoleon"]
+tests = ["pytest", "pytest-cov"]
+
+[[package]]
 name = "pyparsing"
 version = "3.3.2"
 description = "pyparsing - Classes and methods to define and execute parsing grammars"
@@ -2115,7 +2134,10 @@ h2 = ["h2 (>=4,<5)"]
 socks = ["pysocks (>=1.5.6,!=1.5.7,<2.0)"]
 zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 
+[extras]
+libxc = ["pylibxc7"]
+
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "e934cd78bec829cab055a4b73b975dfd21a43f5182ad824d136707e99846c77a"
+content-hash = "495017b898ad63d87b8fa3dd3b02e41661ace4679863095064600461784fd046"

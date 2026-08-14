@@ -3,10 +3,10 @@ Two-temperature aluminium: Johnson et al. (2025)
 =================================================
 
 This benchmark compares Otter IS-QOZ/HNC :math:`g_{ii}(r)` with the three
-reference curve families associated with
-Fig. 2(a), 2(c), and 2(d) of :cite:t:`JohnsonEtAl2025`.  The states are
+reference curve families in Fig. 2(a)--2(d) of :cite:t:`JohnsonEtAl2025`.
+The states are
 aluminium at :math:`\rho=2.7` g cm\ :sup:`-3`,
-:math:`T_i=1` eV, and :math:`T_e=1,10,30` eV.  The paper labels the
+:math:`T_i=1` eV, and :math:`T_e=1,3,10,30` eV.  The paper labels the
 reference methods as 2TTCP HNC+bridge, DFT-MD, and YOCP HNC+bridge.
 
 The reference abscissa is :math:`r` in atomic units (Bohr), as shown on the
@@ -17,8 +17,9 @@ the dedicated accepted-baseline manifest and every NPZ checksum.  With
 ``False``, this same file calls the public Otter workflow, writes candidate
 results under ``benchmarks/outputs``, and plots them.
 
-The publication points have unresolved extraction provenance and are
-published with article/panel attribution and license status ``NOASSERTION``.
+The project maintainer digitized the publication curves from Fig. 2(a)--2(d).
+They are distributed with article/panel attribution and license status
+``NOASSERTION``.
 See :doc:`the provenance and reuse notice
 </benchmarks/johnson_et_al_2025_two_temperature_al>`.
 """
@@ -28,6 +29,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -37,18 +39,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
-from otter.plotting import save_figure, set_style
+from otter.plotting import grid_figsize, save_figure, set_style
 
 
 # =============================================================================
 # User input
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
+if os.environ.get("OTTER_RECOMPUTE_JOHNSON_AL", "0") == "1":
+    USE_PRECOMPUTED_DATA = False
 
-# Three independent states, each with six continuum workers.
-MAX_STATE_WORKERS = 3
+# States run sequentially; each AA solve parallelizes its continuum channels.
+MAX_STATE_WORKERS = 1
 CONTINUUM_WORKERS_PER_STATE = 6
-AA_N_POINTS = 1024
 QOZ_N_POINTS = 4096
 
 LFC_MODEL = "chabrier1990"
@@ -65,6 +68,11 @@ STATES: tuple[dict[str, Any], ...] = (
         "state_id": "al_rho2p7_te1_ti1",
         "te_ev": 1.0,
         "panel": "Fig. 2(a)",
+    },
+    {
+        "state_id": "al_rho2p7_te3_ti1",
+        "te_ev": 3.0,
+        "panel": "Fig. 2(b)",
     },
     {
         "state_id": "al_rho2p7_te10_ti1",
@@ -141,8 +149,8 @@ def load_precomputed_states() -> dict[str, dict[str, np.ndarray]]:
     records = {
         str(record["state_id"]): record for record in manifest["states"]
     }
-    if set(records) != expected_ids:
-        raise RuntimeError("Baseline manifest state coverage is incomplete.")
+    if not records or not set(records).issubset(expected_ids):
+        raise RuntimeError("Baseline manifest state coverage is invalid.")
     terminal_statuses = {"accepted", "reference_only_strict_hnc_rejected"}
     unresolved = {
         state_id: str(record.get("status"))
@@ -179,6 +187,12 @@ def load_precomputed_states() -> dict[str, dict[str, np.ndarray]]:
         if str(payload["state_id"].item()) != state_id:
             raise ValueError(f"State identifier mismatch in {path}.")
         loaded[state_id] = payload
+    missing = expected_ids - set(records)
+    if missing:
+        print(
+            "Accepted baseline does not yet contain: "
+            + ", ".join(sorted(missing))
+        )
     return loaded
 
 
@@ -189,27 +203,13 @@ def workflow_config(state: dict[str, Any]) -> PlasmaWorkflowConfig:
         temperature_ev=float(state["te_ev"]),
         ion_temperature_ev=1.0,
         rho_g_cc=2.7,
-        electronic_model="qm",
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model=str(LFC_MODEL),
         hnc_tol=float(HNC_TOL),
         hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
         hnc_max_iter=500,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -340,7 +340,7 @@ def save_candidates(
             **git_revision(),
         },
         "configuration": {
-            "aa_n_points": AA_N_POINTS,
+            "aa_n_points": 4096,
             "qoz_n_points_before_padding": QOZ_N_POINTS,
             "continuum_workers_per_state": CONTINUUM_WORKERS_PER_STATE,
             "lfc_model": LFC_MODEL,
@@ -365,21 +365,32 @@ def save_candidates(
 
 
 def solve_all_states() -> dict[str, dict[str, np.ndarray]]:
-    """Calculate the three independent states with bounded parallelism."""
+    """Calculate the four independent states with bounded parallelism."""
     solved: dict[str, dict[str, np.ndarray]] = {}
     failures: dict[str, str] = {}
-    with ProcessPoolExecutor(max_workers=MAX_STATE_WORKERS) as pool:
-        futures = {pool.submit(solve_state, state): state for state in STATES}
-        for future in as_completed(futures):
-            state = futures[future]
+    if MAX_STATE_WORKERS <= 1:
+        for state in STATES:
             state_id = str(state["state_id"])
             try:
-                solved[state_id] = future.result()
+                solved[state_id] = solve_state(state)
             except Exception as exc:
                 failures[state_id] = f"{type(exc).__name__}: {exc}"
                 print(f"[strictly rejected] {state_id}: {exc}")
             else:
                 print(f"[computed] {state_id}")
+    else:
+        with ProcessPoolExecutor(max_workers=MAX_STATE_WORKERS) as pool:
+            futures = {pool.submit(solve_state, state): state for state in STATES}
+            for future in as_completed(futures):
+                state = futures[future]
+                state_id = str(state["state_id"])
+                try:
+                    solved[state_id] = future.result()
+                except Exception as exc:
+                    failures[state_id] = f"{type(exc).__name__}: {exc}"
+                    print(f"[strictly rejected] {state_id}: {exc}")
+                else:
+                    print(f"[computed] {state_id}")
     save_candidates(solved, failures)
     if not solved:
         raise RuntimeError("Every Otter state failed its strict checks.")
@@ -449,7 +460,7 @@ def print_metrics() -> None:
     for definition in STATES:
         state_id = str(definition["state_id"])
         if state_id not in states:
-            print(f"{state_id:24s} {'Otter strict HNC rejected':20s}")
+            print(f"{state_id:24s} {'no accepted Otter state':20s}")
             continue
         r_otter = np.asarray(states[state_id]["r_bohr"], dtype=float)
         g_otter = np.asarray(states[state_id]["gii_r"], dtype=float)
@@ -478,7 +489,14 @@ print_metrics()
 # scientific comparison, not an implementation identity test.
 
 set_style("thesis", palette="bing")
-fig, axes = plt.subplots(1, 3, figsize=(12.0, 3.8), sharex=True, sharey=True)
+fig, axes = plt.subplots(
+    2,
+    2,
+    figsize=grid_figsize(2, 2),
+    sharex=True,
+    sharey=True,
+)
+axes = np.asarray(axes).ravel()
 colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
 for panel_index, (axis, definition) in enumerate(zip(axes, STATES)):
@@ -498,7 +516,7 @@ for panel_index, (axis, definition) in enumerate(zip(axes, STATES)):
         axis.text(
             0.97,
             0.05,
-            "Otter curve withheld:\nstrict HNC rejected",
+            "No accepted Otter baseline",
             transform=axis.transAxes,
             ha="right",
             va="bottom",
@@ -526,12 +544,12 @@ for panel_index, (axis, definition) in enumerate(zip(axes, STATES)):
         rf"{definition['panel']}: $T_e={te_ev:g}$ eV, $T_i=1$ eV"
     )
     axis.set_xlabel(r"$r$ [Bohr]")
-    axis.set_xlim(-0.5, 8.2)
+    axis.set_xlim(2.5, 8.2)
     axis.set_ylim(-0.05, 2.30)
     axis.axhline(1.0, color="0.55", lw=0.8, ls=":")
     if panel_index == 0:
         axis.set_ylabel(r"$g_{ii}(r)$")
-        axis.legend(fontsize=9, loc="best")
+        axis.legend(fontsize="small", loc="best")
 
 fig.suptitle(
     r"Al, $\rho=2.7$ g cm$^{-3}$: "
@@ -547,7 +565,7 @@ fig.text(
     va="bottom",
     fontsize=7.5,
 )
-fig.tight_layout(rect=(0.0, 0.035, 1.0, 0.95), pad=0.45)
+fig.tight_layout(rect=(0.0, 0.025, 1.0, 0.95), pad=0.55)
 saved_paths = save_figure(
     fig,
     FIGURE_DIR / "johnson_et_al_2025_two_temperature_al_gii",

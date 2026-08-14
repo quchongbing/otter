@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 import matplotlib.pyplot as plt
 import numpy as np
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
-from otter.plotting import save_figure, set_style
+from otter.plotting import grid_figsize, save_figure, set_style
 
 # ===========================================
 #            user input parameters
@@ -21,8 +21,6 @@ TE_EV = 8.617333262  # 100 kK
 TI_EV = TE_EV
 
 # ===========================================
-SHOW_SCF_PROGRESS = False
-SHOW_MIXTURE_ROOT_PROGRESS = True
 SAVE_NPZ = True
 OUTPUT_PATH = ROOT / "outputs" / "ch136_state.npz"
 SAVE_FIGURES = True
@@ -42,7 +40,12 @@ def _plot_pair_matrices(ion: dict) -> None:
     n_species = len(species)
 
     set_style("docs", palette="deep_science")
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=grid_figsize(1, 2),
+        constrained_layout=True,
+    )
     ax_g, ax_s = axes
     for i in range(n_species):
         for j in range(i, n_species):
@@ -53,12 +56,12 @@ def _plot_pair_matrices(ion: dict) -> None:
     ax_g.set_xlabel("r [Bohr]")
     ax_g.set_ylabel("g_ij(r)")
     ax_g.set_xlim(-0.5, 20.0)
-    ax_g.legend(fontsize=8)
+    ax_g.legend()
 
     ax_s.set_xlabel("k [1/Bohr]")
     ax_s.set_ylabel("S_ij(k)")
     ax_s.set_xlim(0.0, 20.0)
-    ax_s.legend(fontsize=8)
+    ax_s.legend()
     if SAVE_FIGURES:
         paths = save_figure(fig, FIGURE_STEM)
         print(
@@ -75,19 +78,12 @@ def main() -> None:
         temperature_ev=TE_EV,
         rho_g_cc=RHO_G_CC,
         ion_temperature_ev=TI_EV,
-        show_progress=SHOW_SCF_PROGRESS,
-        show_mu_progress=SHOW_MIXTURE_ROOT_PROGRESS,
         save_state_npz=SAVE_NPZ,
         save_state_path=OUTPUT_PATH,
     )
     result = solve_plasma_workflow(cfg)
     ion = result["ion"]
 
-    print(f"species={ion['species']}")
-    print(f"zbar={np.asarray(ion['zbar'])}")
-    print(
-        f"HNC iterations={ion['hnc_iters']}  qoz={ion['qoz_build_s']:.3f}s hnc={ion['hnc_solve_s']:.3f}s"
-    )
     mix_meta = result["electronic"]["result"].get("meta", {})
     print(
         "mixture root "

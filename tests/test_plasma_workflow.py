@@ -57,9 +57,25 @@ def test_workflow_defaults_to_partition_charge_and_strict_hnc_output_closure() -
     assert cfg.qoz_zbar_mode == "pseudoatom_partition"
     assert cfg.qoz_response_lfc_model == "chabrier1990"
     assert cfg.electronic_model == "qm"
+    assert cfg.show_progress is True
+    assert cfg.debug is False
     assert cfg.qoz_renormalize_nscr_to_zbar is True
     assert cfg.hnc_enforce_nodal_tail_zero is False
     assert cfg.hnc_closure_transform_tol is None
+    assert wf._species_parallel_jobs_default(cfg, 2) == 2
+    cfg.species_parallel_jobs = 1
+    assert wf._species_parallel_jobs_default(cfg, 2) == 1
+
+
+def test_workflow_config_solve_method_uses_high_level_entry_point(monkeypatch) -> None:
+    cfg = wf.PlasmaWorkflowConfig(
+        elements=["H"],
+        temperature_ev=10.0,
+        rho_g_cc=1.0,
+    )
+    expected = {"ok": True}
+    monkeypatch.setattr(wf, "solve_plasma_workflow", lambda value: expected if value is cfg else None)
+    assert cfg.solve() is expected
 
 
 def test_workflow_rejects_nonpositive_hnc_closure_transform_tolerance() -> None:
@@ -109,8 +125,52 @@ def test_solve_plasma_workflow_dispatches_single_species_electronic() -> None:
         wf.solve_mixture_full_then_ext = old_mix
 
     assert result["electronic"]["kind"] == "single_species"
+    assert result["otter_version"] == wf.__version__
+    assert result["configuration"]["electronic_model"] == "qm"
+    assert result["configuration"]["rho_g_cc"] == pytest.approx(2.7)
+    assert "StarrettSaumon2014" in result["citation_keys"]
     assert str(seen["cfg"].element) == "Al"
     assert str(seen["cfg"].electronic_model) == "qm"
+    assert seen["cfg"].show_scf_progress is True
+    assert seen["cfg"].show_summary is True
+    assert seen["cfg"].debug is False
+
+
+def test_workflow_compact_report_and_quiet_mode(monkeypatch, capsys) -> None:
+    def _fake_full(_cfg_single):
+        r = np.linspace(0.1, 4.0, 16)
+        return {
+            "mu": 0.25,
+            "r_ws": 1.5,
+            "r": r,
+            "n_scr": np.exp(-r),
+            "zbar": 3.0,
+        }
+
+    monkeypatch.setattr(wf, "solve_full_then_external", _fake_full)
+    wf.solve_plasma_workflow(
+        wf.PlasmaWorkflowConfig(
+            elements=["Al"],
+            temperature_ev=10.0,
+            rho_g_cc=2.7,
+        )
+    )
+    report = capsys.readouterr().out
+    assert "Otter " in report
+    assert "[run] Al | rho=2.7 g/cm^3 | Te=10 eV" in report
+    assert "QM electronic structure" in report
+    assert "Te=10 eV" in report
+    assert "[done] total time=" in report
+
+    wf.solve_plasma_workflow(
+        wf.PlasmaWorkflowConfig(
+            elements=["Al"],
+            temperature_ev=10.0,
+            rho_g_cc=2.7,
+            show_progress=False,
+        )
+    )
+    assert capsys.readouterr().out == ""
 
 
 def test_solve_plasma_workflow_dispatches_multicomponent_electronic() -> None:
@@ -251,6 +311,25 @@ def test_solve_plasma_workflow_runs_one_component_ion_structure_when_ti_is_given
     assert result["ion"]["sii_k"].ndim == 1
     assert result["ion"]["gij_r"].shape[0:2] == (1, 1)
     assert result["ion"]["sij_k"].shape[0:2] == (1, 1)
+    assert result["ion"]["v_ie_k"].ndim == 1
+    assert result["ion"]["v_ie_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["v_ee_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["c_ie_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["c_ee_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["n_ion_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["f_k"].shape == result["ion"]["k"].shape
+    np.testing.assert_array_equal(result["ion"]["f_k"], result["ion"]["n_ion_k"])
+    np.testing.assert_array_equal(result["ion"]["q_k"], result["ion"]["n_scr_k"])
+    np.testing.assert_array_equal(result["ion"]["gee_k"], result["ion"]["g_ee_k"])
+    np.testing.assert_array_equal(result["ion"]["v_ei_k"], result["ion"]["v_ie_k"])
+    np.testing.assert_allclose(
+        result["ion"]["c_ie_k"],
+        -result["ion"]["v_ie_k"] / (10.0 * wf.EV_TO_HA),
+    )
+    np.testing.assert_allclose(
+        result["ion"]["c_ee_k"],
+        -result["ion"]["v_ee_k"] / (10.0 * wf.EV_TO_HA),
+    )
     assert float(seen["options"].high_k_taper_start_frac) == 0.9
     assert result["ion"]["qoz_response_chi0_model"] == "lindhard_fd"
     assert result["ion"]["qoz_response_lfc_model"] == "chabrier1990"
@@ -545,6 +624,19 @@ def test_solve_plasma_workflow_runs_multicomponent_ion_structure_when_ti_is_give
     assert result["ion"]["kind"] == "multicomponent"
     assert result["ion"]["gij_r"].ndim == 3
     assert result["ion"]["sij_k"].ndim == 3
+    assert result["ion"]["v_ie_k"].shape[0] == 2
+    assert result["ion"]["c_ie_k"].shape[0] == 2
+    assert result["ion"]["v_ee_k"].ndim == 1
+    assert result["ion"]["c_ee_k"].ndim == 1
+    assert result["ion"]["v_ie_r"].shape == (2, result["ion"]["r"].size)
+    assert result["ion"]["c_ie_r"].shape == (2, result["ion"]["r"].size)
+    assert result["ion"]["v_ee_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["c_ee_r"].shape == result["ion"]["r"].shape
+    assert result["ion"]["n_ion_r"].shape == (2, result["ion"]["r"].size)
+    assert result["ion"]["f_k"].shape == (2, result["ion"]["k"].size)
+    np.testing.assert_array_equal(result["ion"]["f_k"], result["ion"]["n_ion_k"])
+    np.testing.assert_array_equal(result["ion"]["q_k"], result["ion"]["n_scr_k"])
+    np.testing.assert_array_equal(result["ion"]["gee_k"], result["ion"]["g_ee_k"])
     assert float(seen["options"].high_k_taper_start_frac) == 0.9
     assert seen["hnc_tail_shift"] is False
     assert result["ion"]["hnc_enforce_nodal_tail_zero"] is False

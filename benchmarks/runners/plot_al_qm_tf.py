@@ -391,7 +391,10 @@ def plot_states(loaded: list[dict[str, np.ndarray]]) -> None:
     styles = {"qm": "-", "tf": "--"}
     labels = {"qm": "KS-DFT", "tf": "Thomas–Fermi"}
     fig, axes = plt.subplots(
-        len(loaded), 4, figsize=(15.5, 3.5 * len(loaded)), squeeze=False
+        len(loaded),
+        4,
+        figsize=otter_plotting.grid_figsize(len(loaded), 4),
+        squeeze=False,
     )
     for row, data in enumerate(loaded):
         for model_index, model in enumerate(MODEL_ORDER):
@@ -455,7 +458,7 @@ def plot_states(loaded: list[dict[str, np.ndarray]]) -> None:
     )
     for axis, title in zip(axes[0], titles, strict=True):
         axis.set_title(title)
-        axis.legend(fontsize=8)
+        axis.legend(fontsize="small")
     for axis in axes[-1, :3]:
         axis.set_xlabel(r"$r$ [Bohr]")
     axes[-1, 3].set_xlabel(r"$k$ [Bohr$^{-1}$]")

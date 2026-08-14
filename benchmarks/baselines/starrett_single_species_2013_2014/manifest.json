@@ -2,7 +2,7 @@
   "schema_version": "otter_benchmark_manifest_v1",
   "benchmark_id": "starrett_single_species_2013_2014",
   "title": "Otter QM/TF versus Starrett TF single-species gii",
-  "description": "Six thermodynamic states and twelve current-Otter IS calculations. Eight QM/TF states passed strict electronic, HNC, and transform-closure gates; failed attempts are recorded and omitted from the figure.",
+  "description": "Six thermodynamic states and twelve current-Otter IS calculations. All QM/TF states pass the electronic, HNC, and transform-closure gates with the default 4096-point radial grid.",
   "literature_source": {
     "citation_key": "StarrettSaumon2014",
     "citation": "C. E. Starrett and D. Saumon, High Energy Density Physics 10, 35-42 (2014)",
@@ -20,7 +20,7 @@
   },
   "configuration": {
     "structure_model": "IS",
-    "aa_n_points": 1024,
+    "aa_n_points": 4096,
     "bound_occ_mode": "fd",
     "bound_rmax_mult": null,
     "bound_zero_tail_refine": false,
@@ -39,174 +39,170 @@
     "k_retained_max_bohr_inv": 20.0
   },
   "producer": {
-    "project": "Otter",
     "script_relative_path": "benchmarks/examples/plot_starrett_single_species_2013_2014.py",
-    "git_base_revision": "f47610cb802699e108248fa7fc138e7cbede282e",
+    "script_sha256": "63c69567cafeed1c91edab453026818a045bc976258ad836a0598bd8497d9d9f",
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
     "worktree_dirty": true,
-    "current_controller_sha256": "c537841760894fb0c269b4d3528ff0f57ddf3cae113af7a3342fa80eb80b67bc",
-    "note": "Controller and baseline hashes identify the uncommitted calculation state."
+    "script_sha256_current": "63c69567cafeed1c91edab453026818a045bc976258ad836a0598bd8497d9d9f",
+    "script_sha256_at_generation": "63c69567cafeed1c91edab453026818a045bc976258ad836a0598bd8497d9d9f",
+    "current_controller_sha256": "63c69567cafeed1c91edab453026818a045bc976258ad836a0598bd8497d9d9f"
   },
   "states": [
     {
       "state_id": "fe_10_qm",
-      "status": "strict_hnc_rejected",
-      "baseline_file": null,
-      "baseline_sha256": null,
-      "attempts": [
-        {
-          "qoz_n_points_before_padding": 4096,
-          "hnc_best_residual": 2.293e-05,
-          "closure_transform_max_abs": 0.003602,
-          "reason": "Transform-closure gate exceeded 0.0025."
-        },
-        {
-          "qoz_n_points_before_padding": 8192,
-          "hnc_best_residual": 2.321e-05,
-          "closure_transform_max_abs": 0.003550,
-          "reason": "Grid refinement did not bring transform closure below 0.0025."
-        }
-      ]
+      "status": "accepted",
+      "qoz_n_points_before_padding": 4096,
+      "baseline_file": "fe_10_qm.npz",
+      "baseline_sha256": "732289180e53ead85f5b189a917d92e96b683ba7c1444ea4147d15af0056a281",
+      "zbar_partition": 8.28573523411513,
+      "hnc_output_residual": 7.469349818601769e-05,
+      "closure_transform_max_abs": 0.002146495696902395,
+      "reference_rmse": 0.021871597747997847,
+      "threshold_state_status": "resolved",
+      "n_model_points": 2906
     },
     {
       "state_id": "fe_10_tf",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "fe_10_tf.npz",
-      "baseline_sha256": "e5717a959243be94b0665007cb4127bcc6d6b5d43483b13b7dbe78ecda2163e5",
-      "zbar_partition": 8.80782544242533,
-      "hnc_output_residual": 7.221846820875187e-05,
-      "closure_transform_max_abs": 0.00031041289728417354,
-      "reference_rmse": 0.04867623236742198
+      "baseline_sha256": "184997e20f6086635f8d2be137f96716e3edd5504ac06913cf4d22a12cbe5fa7",
+      "zbar_partition": 8.807809287413011,
+      "hnc_output_residual": 7.196629622229671e-05,
+      "closure_transform_max_abs": 0.00030890618251477875,
+      "reference_rmse": 0.04865052779866585,
+      "threshold_state_status": "not_applicable_tf",
+      "n_model_points": 2906
     },
     {
       "state_id": "h_5_qm",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "h_5_qm.npz",
-      "baseline_sha256": "36c727683036687be91fd3608e9e8b088ea5164718d9ddf7be7e32d9d132a31a",
+      "baseline_sha256": "b54e2983b84d5541140a210999e03a90e3de08c029afb82e31a5f6d362d65fec",
       "zbar_partition": 1.0,
-      "hnc_output_residual": 2.883198573307819e-05,
-      "closure_transform_max_abs": 0.0013063037895130192,
-      "reference_rmse": 0.02021849195467826
+      "hnc_output_residual": 6.694069424553035e-06,
+      "closure_transform_max_abs": 0.00021537649746683485,
+      "reference_rmse": 0.012593449040375099,
+      "threshold_state_status": "none",
+      "n_model_points": 6828
     },
     {
       "state_id": "h_5_tf",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "h_5_tf.npz",
-      "baseline_sha256": "7dd0460c33ddefad5683ba7b59df9414bce9e850926c406d75ed13b242322eb0",
-      "zbar_partition": 0.9726299649670443,
-      "hnc_output_residual": 8.88219005055768e-05,
-      "closure_transform_max_abs": 0.0023219729623803476,
-      "reference_rmse": 0.006928147119474931
+      "baseline_sha256": "566e5190d9ff57fdf2b102d6be2c625b55a8f1d323c9168cf6af40bdf8bf2b44",
+      "zbar_partition": 0.9726315329550436,
+      "hnc_output_residual": 7.465537656050268e-05,
+      "closure_transform_max_abs": 0.0009120437452491137,
+      "reference_rmse": 0.00700156111266076,
+      "threshold_state_status": "not_applicable_tf",
+      "n_model_points": 8192
     },
     {
       "state_id": "h_172_qm",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "h_172_qm.npz",
-      "baseline_sha256": "cae15d75b2094b6d321127144e0ba0cf2ef05a59d8be3d509d7e2303f529c511",
+      "baseline_sha256": "6f9220140bbda02f21f5277dfb05cd8d75b9bf986343bcd2bf54088576217071",
       "zbar_partition": 1.0,
-      "hnc_output_residual": 1.778628331077501e-06,
-      "closure_transform_max_abs": 6.461514725231154e-05,
-      "reference_rmse": 0.023280885615039673
+      "hnc_output_residual": 7.800542676020342e-06,
+      "closure_transform_max_abs": 1.1073092600621948e-05,
+      "reference_rmse": 0.004844356272738249,
+      "threshold_state_status": "none",
+      "n_model_points": 6828
     },
     {
       "state_id": "h_172_tf",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "h_172_tf.npz",
-      "baseline_sha256": "0506d38b0588a729f383ab763f6e8640d0957be4db7a967ca1459b361df03b81",
-      "zbar_partition": 0.9742243842999818,
-      "hnc_output_residual": 5.63390055813786e-06,
-      "closure_transform_max_abs": 7.885731491907855e-06,
-      "reference_rmse": 0.008151761584614432
+      "baseline_sha256": "b88f66e667d5378e4f65ba6f81ddc3c7e921b14c6e82b7525da995046d77f5c1",
+      "zbar_partition": 0.9742258698288224,
+      "hnc_output_residual": 5.635123136854254e-06,
+      "closure_transform_max_abs": 7.893053556640162e-06,
+      "reference_rmse": 0.008150425132359695,
+      "threshold_state_status": "not_applicable_tf",
+      "n_model_points": 8192
     },
     {
       "state_id": "c_64p64_qm",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "c_64p64_qm.npz",
-      "baseline_sha256": "5e5f63066cba107cfc11743497373fdc6aa555895e61698c521dabec5b728166",
-      "zbar_partition": 4.078452831525777,
-      "hnc_output_residual": 5.414285035081838e-06,
-      "closure_transform_max_abs": 5.8551144686891377e-05,
-      "reference_rmse": 0.023018149844631082
+      "baseline_sha256": "79b16bafb79f70f6021e174b21696596b95225217cbf7bdacc5c2dffacf14e46",
+      "zbar_partition": 4.078968695564146,
+      "hnc_output_residual": 5.7076275546361395e-06,
+      "closure_transform_max_abs": 7.643016021974258e-05,
+      "reference_rmse": 0.024015125565233,
+      "threshold_state_status": "resolved",
+      "n_model_points": 4002
     },
     {
       "state_id": "c_64p64_tf",
       "status": "accepted",
       "qoz_n_points_before_padding": 4096,
       "baseline_file": "c_64p64_tf.npz",
-      "baseline_sha256": "3f18375af63b7c6410ea8f20df239c9c0ecb7ef33fd44666a2cc41d605d2b7ee",
-      "zbar_partition": 4.16573616793207,
-      "hnc_output_residual": 7.908530021611247e-06,
-      "closure_transform_max_abs": 0.00014255142789043607,
-      "reference_rmse": 0.029498587019472503
+      "baseline_sha256": "94ec227b608cfe79fa9c79b3893a30545f34f53d82f6afc8159b86f1274db9e0",
+      "zbar_partition": 4.165756392044582,
+      "hnc_output_residual": 7.906088538582004e-06,
+      "closure_transform_max_abs": 0.00014243569662919509,
+      "reference_rmse": 0.029495748492000744,
+      "threshold_state_status": "not_applicable_tf",
+      "n_model_points": 4002
     },
     {
       "state_id": "w_10_qm",
-      "status": "strict_hnc_rejected",
-      "baseline_file": null,
-      "baseline_sha256": null,
-      "attempts": [
-        {
-          "qoz_n_points_before_padding": 4096,
-          "hnc_best_residual": 1.0,
-          "min_s_k": -0.6783,
-          "closure_transform_max_abs": 10.17,
-          "reason": "No physical HNC fixed point was obtained."
-        }
-      ]
+      "status": "accepted",
+      "qoz_n_points_before_padding": 4096,
+      "baseline_file": "w_10_qm.npz",
+      "baseline_sha256": "165a112f6e93437473ebe3f82fcf0385bbb5ee81b2543f750523da18883dc6b0",
+      "zbar_partition": 9.422368442306421,
+      "hnc_output_residual": 1.0171820324116733e-05,
+      "closure_transform_max_abs": 5.7798911054396385e-05,
+      "reference_rmse": 0.12333312483062032,
+      "threshold_state_status": "resolved",
+      "n_model_points": 2366
     },
     {
       "state_id": "w_10_tf",
       "status": "accepted",
-      "qoz_n_points_before_padding": 8192,
+      "qoz_n_points_before_padding": 4096,
       "baseline_file": "w_10_tf.npz",
-      "baseline_sha256": "39449eb8e7c11c78c8b6adf5df2659f2e283880259ba61d2381b5890f414b1f5",
-      "zbar_partition": 12.731681175000638,
-      "hnc_output_residual": 3.672994373882798e-05,
-      "closure_transform_max_abs": 0.0006350105766823599,
-      "reference_rmse_by_curve": {
-        "gii_W_40gcc_10.0ev_starrett.csv": 0.15469852162380252,
-        "gii_W_40gcc_10.0ev_starrett_TF.csv": 0.013229102104488815
-      }
+      "baseline_sha256": "d06bb584633cee20bd53a1497c9686e374ac3aeb5c5f6ef54996e9bd5423e3b9",
+      "zbar_partition": 12.731361340657848,
+      "hnc_output_residual": 5.818133592019499e-09,
+      "closure_transform_max_abs": 7.763067422228431e-07,
+      "reference_rmse": 0.01338154820149424,
+      "threshold_state_status": "not_applicable_tf",
+      "n_model_points": 2366
     },
     {
       "state_id": "w_60_qm",
-      "status": "strict_hnc_rejected",
-      "baseline_file": null,
-      "baseline_sha256": null,
-      "attempts": [
-        {
-          "qoz_n_points_before_padding": 4096,
-          "hnc_best_residual": 1.0,
-          "min_s_k": -357.3,
-          "closure_transform_max_abs": 30210.0,
-          "reason": "No physical HNC fixed point was obtained."
-        }
-      ]
+      "status": "accepted",
+      "qoz_n_points_before_padding": 4096,
+      "baseline_file": "w_60_qm.npz",
+      "baseline_sha256": "78ce7a4cc46402feee1ae7172952762c4af9be549ef3610996212942fb7cd04c",
+      "zbar_partition": 14.289781117607042,
+      "hnc_output_residual": 9.399350611048372e-05,
+      "closure_transform_max_abs": 0.0009389113151744288,
+      "reference_rmse": 0.017491107721051904,
+      "threshold_state_status": "resolved",
+      "n_model_points": 2366
     },
     {
       "state_id": "w_60_tf",
-      "status": "strict_hnc_rejected",
-      "baseline_file": null,
-      "baseline_sha256": null,
-      "attempts": [
-        {
-          "qoz_n_points_before_padding": 4096,
-          "hnc_best_residual": 7.186e-05,
-          "closure_transform_max_abs": 0.002539,
-          "reason": "Transform-closure gate exceeded 0.0025."
-        },
-        {
-          "qoz_n_points_before_padding": 8192,
-          "hnc_best_residual": 8.097e-05,
-          "closure_transform_max_abs": 0.002627,
-          "reason": "Grid refinement did not bring transform closure below 0.0025."
-        }
-      ]
+      "status": "accepted",
+      "qoz_n_points_before_padding": 4096,
+      "baseline_file": "w_60_tf.npz",
+      "baseline_sha256": "452e4bc0c0db326b6e991198b9af87b00cf1c9e614963b266243c624919ea1af",
+      "zbar_partition": 15.28522984421894,
+      "hnc_output_residual": 7.885766717699193e-10,
+      "closure_transform_max_abs": 5.696746407934938e-10,
+      "reference_rmse": 0.004430439752776159,
+      "threshold_state_status": "not_applicable_tf",
+      "n_model_points": 2366
     }
   ]
 }

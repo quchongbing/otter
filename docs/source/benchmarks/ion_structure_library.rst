@@ -34,6 +34,8 @@ ion-structure curves for aluminium, beryllium, and carbon.
      - C. E. Starrett, private communication (unpublished)
 
 Each panel states whether it is an equilibrium or two-temperature comparison.
+The two Clérouin panels include independent Otter KS and Thomas--Fermi
+average-atom calculations; both use the same QOZ/HNC settings.
 
 Units
 -----

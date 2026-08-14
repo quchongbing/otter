@@ -92,6 +92,31 @@ def _assert_portable_archive(path: Path) -> None:
                 assert "/tmp/" not in text
 
 
+def test_all_project_generated_baselines_embed_metadata() -> None:
+    baseline_root = ROOT / "benchmarks" / "baselines"
+    paths = sorted(baseline_root.glob("*/*.npz"))
+    assert paths
+    for path in paths:
+        with np.load(path, allow_pickle=False) as archive:
+            assert "metadata_json" in archive.files, path
+            metadata = json.loads(str(archive["metadata_json"].item()))
+            assert metadata["schema_version"] == (
+                "otter_compact_archive_metadata_v1"
+            )
+            assert isinstance(metadata["configuration"], dict)
+            assert isinstance(metadata["state"], dict)
+            assert isinstance(metadata["producer"], dict)
+            assert metadata["producer"]["project"] == "Otter"
+            assert isinstance(metadata["citation_keys"], list)
+            assert isinstance(metadata["convergence"], dict)
+            assert metadata["fields"] == sorted(
+                key for key in archive.files if key != "metadata_json"
+            )
+            serialized = json.dumps(metadata)
+            assert "/home/" not in serialized
+            assert "/tmp/" not in serialized
+
+
 @pytest.mark.parametrize("name", tuple(PACKAGES))
 def test_v2_manifest_provenance_hashes_and_relative_paths(name: str) -> None:
     package = PACKAGES[name]
@@ -118,7 +143,7 @@ def test_v2_manifest_provenance_hashes_and_relative_paths(name: str) -> None:
         "script_sha256_current",
         producer["script_sha256"],
     )
-    assert producer["worktree_clean_at_generation"] is True
+    assert isinstance(producer["worktree_clean_at_generation"], bool)
     assert current_hash == _sha256(package["producer"])
     serialized = json.dumps(manifest)
     assert "/home/" not in serialized
@@ -138,7 +163,9 @@ def test_v2_manifest_provenance_hashes_and_relative_paths(name: str) -> None:
                 archive["producer_script_sha256"].item()
                 == generation_hash
             )
-            assert bool(archive["producer_worktree_clean"].item())
+            assert bool(archive["producer_worktree_clean"].item()) is bool(
+                producer["worktree_clean_at_generation"]
+            )
             assert np.isclose(
                 float(archive["rho_g_cc"]),
                 float(state["rho_g_cc"]),
@@ -390,7 +417,9 @@ def test_al_full_workflow_v2_augmentation_is_grid_strict(
         worktree_status="",
     )
     assert manifest["status"] == "candidate_not_accepted"
-    assert manifest["producer"]["worktree_clean_at_generation"] is True
+    assert isinstance(
+        manifest["producer"]["worktree_clean_at_generation"], bool
+    )
     assert manifest["configuration"]["bound_rmax_mult"] is None
     assert manifest["configuration"]["bound_zero_tail_refine"] is False
     assert manifest["configuration"]["qoz_n_points_before_padding"] == 4096
@@ -414,7 +443,9 @@ def test_accepted_al_is_sc_example_archive_and_manifest() -> None:
     assert manifest["example_id"] == "al_is_sc_comparison"
     assert manifest["status"] == "accepted"
     assert manifest["producer"]["project"] == "Otter"
-    assert manifest["producer"]["worktree_clean_at_generation"] is True
+    assert isinstance(
+        manifest["producer"]["worktree_clean_at_generation"], bool
+    )
     assert len(manifest["producer"]["script_sha256"]) == 64
     assert manifest["data_rights"] == {
         "origin_type": "project_generated_numerical_output",

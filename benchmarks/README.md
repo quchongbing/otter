@@ -5,7 +5,7 @@ reference results, and lightweight plotting programs:
 
 ```text
 reference_data/   Digitized or tabulated results from cited publications
-baselines/        Portable, pure-numeric Otter/precursor calculation results
+baselines/        Pure-numeric Otter plotting baselines
 examples/         Sphinx-Gallery benchmark and validation pages
 runners/          Offline programs that read those files and regenerate plots
 ```
@@ -22,6 +22,13 @@ Every reference-result dataset must:
 - contain no absolute workstation paths;
 - provide convergence metadata and a result-affecting configuration;
 - be listed in a manifest with SHA-256 checksums and publication provenance.
+
+Baseline NPZ files use benchmark-specific schemas because a single archive
+may contain several densities, temperatures, or model variants.  They are
+read by the corresponding gallery/runner, not by ``otter.load_plasma_state``.
+For a complete single-workflow archive and its stable public API, use
+``otter.save_plasma_state`` and the ``otter_state_v3`` schema documented in
+``docs/source/user_guide/state_exports.rst``.
 
 Literature-derived and author-provided data are not covered by Otter's
 source-code license unless their manifest explicitly says otherwise.  The
@@ -56,6 +63,21 @@ Curated packages currently included are:
 Expensive producer programs are named ``regenerate_*.py``.  They write to
 ``benchmarks/outputs/**/recomputed`` and do not modify accepted reference
 results.
+
+To recalculate every public Otter dataset without reusing old candidates or
+the accepted carbon-ionization states, run:
+
+```bash
+poetry run python tools/recompute_all_data.py --fresh
+```
+
+Use ``--list`` to show dataset identifiers and repeated ``--only NAME``
+options for a subset.  The command deletes only selected candidate data below
+``benchmarks/outputs``.  It never changes ``benchmarks/reference_data`` or
+``benchmarks/baselines``.  Replace an accepted baseline only after all new
+states pass the convergence gates, manifest checks, tests, and documentation
+build; this prevents a failed calculation from leaving a mixed old/new
+package.
 
 Public gallery programs are complete, directly executable scripts.  Their
 ``USE_PRECOMPUTED_DATA`` switch selects checksum-verified Otter arrays or a

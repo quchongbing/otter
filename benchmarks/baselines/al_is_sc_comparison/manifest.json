@@ -40,13 +40,13 @@
       "IS",
       "SC (experimental)"
     ],
-    "aa_n_points": 1024,
+    "aa_n_points": 4096,
     "continuum_workers": 8,
     "bound_occ_mode": "fd",
     "bound_rmax_mult": null,
     "bound_zero_tail_refine": false,
     "b3_tail_model": "full",
-    "qoz_n_points_before_padding": 1024,
+    "qoz_n_points_before_padding": 4096,
     "zbar_mode": "pseudoatom_partition",
     "renormalize_nscr_to_zbar": true,
     "chi0_model": "lindhard_fd",
@@ -62,13 +62,13 @@
   },
   "producer": {
     "project": "Otter",
-    "git_commit": "4e3cfb2a21fe7e6784e0aa1adaef0fcb2ab41206",
-    "script_sha256": "73e7f7d68ac658ed14293c6eb1e9b7eaa6a24b80ca690775174fc8d25a4e3188",
-    "script_sha256_at_generation": "73e7f7d68ac658ed14293c6eb1e9b7eaa6a24b80ca690775174fc8d25a4e3188",
-    "script_sha256_current": "b43570832b5ba2398fb0ea17bc5523555952f9b86d343424bac9282328bbf7d1",
-    "worktree_clean_at_generation": true,
-    "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "script_relative_path": "benchmarks/runners/regenerate_al_is_sc_comparison.py"
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
+    "script_sha256": "0ab7fc8607651143de32d9ad5cc4148e812982c62d56fff79b7f1e7283596f0e",
+    "worktree_clean_at_generation": false,
+    "git_status_porcelain_sha256": "ca0438c8f2a0407b93a215de64594936a5431472b3b90183dabd28f852dc6d2c",
+    "script_relative_path": "benchmarks/runners/regenerate_al_is_sc_comparison.py",
+    "script_sha256_current": "0ab7fc8607651143de32d9ad5cc4148e812982c62d56fff79b7f1e7283596f0e",
+    "script_sha256_at_generation": "0ab7fc8607651143de32d9ad5cc4148e812982c62d56fff79b7f1e7283596f0e"
   },
   "state": {
     "element": "Al",
@@ -76,6 +76,7 @@
     "te_ev": 15.0,
     "ti_ev": 15.0,
     "data_file": "Al_rho8p1gcc_Te15eV_Ti15eV_qm_tf_is_sc.npz",
-    "data_sha256": "b0db32a75accfcc0044ac1db27d177b55231fd4b375fddf8a6b7d3d43f9c5aa1"
+    "data_sha256": "96692831e075449e545c59bd5b6f8fa1ff31e1713bdb1307eb03c95960fd889d",
+    "n_model_points": 2634
   }
 }

@@ -1,6 +1,15 @@
 Quick start
 ===========
 
+Google Colab
+------------
+
+Run the introductory aluminium workflow in a browser:
+
+.. raw:: html
+
+   <p><a href="https://colab.research.google.com/github/quchongbing/otter/blob/main/notebooks/00-otter_intro.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></p>
+
 Single-species aluminium
 ------------------------
 
@@ -24,6 +33,39 @@ Run the :download:`mixture workflow <../../examples/mixture_workflow.py>`:
 .. code-block:: console
 
    $ poetry run python examples/mixture_workflow.py
+
+Runtime output
+--------------
+
+The default report shows the state definition, Wigner--Seitz radius,
+``d_n`` and ``d_v`` during SCF, the converged chemical potential, bound-level
+tables, and elapsed time.  Set ``debug=True`` in
+:class:`otter.PlasmaWorkflowConfig` for charge, continuum, tail-matching,
+mixer, and timing diagnostics.  Set ``show_progress=False`` for quiet runs.
+
+Access and export results
+-------------------------
+
+The workflow returns electronic and ionic results in separate dictionaries:
+
+.. code-block:: python
+
+   result = solve_plasma_workflow(config)
+   electronic = result["electronic"]["result"]
+   ion = result["ion"]
+
+   k = ion["k"]
+   q_k = ion["q_k"]
+   f_k = ion["f_k"]
+   G_k = ion["g_ee_k"]
+   v_ie_k = ion["v_ie_k"]
+   g_ii = ion["gii_r"]
+   s_ii = ion["sii_k"]
+
+Set ``save_state_npz=True`` in :class:`otter.PlasmaWorkflowConfig` to save a
+portable ``.npz`` archive.  Array names, shapes, units, interaction channels,
+and the standalone save/load API are documented in
+:doc:`user_guide/state_exports`.
 
 Runtime and cached electronic structure
 ---------------------------------------

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
-
+from otter._version import __version__
 from otter.workflows import (
     PlasmaWorkflowConfig,
     continue_plasma_workflow_from_electronic_result,
@@ -25,11 +24,6 @@ from otter.literature import (
     get_formatted_ref_string,
     write_citations_markdown,
 )
-
-try:
-    __version__ = version("otter")
-except PackageNotFoundError:
-    __version__ = "0+source"
 
 __all__ = [
     "__version__",

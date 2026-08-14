@@ -1,7 +1,7 @@
 {
   "schema_version": "otter_benchmark_manifest_v1",
   "benchmark_id": "al_full_workflow_1ev",
-  "status": "accepted_with_dirty_worktree_provenance",
+  "status": "accepted",
   "title": "Complete Al 8.1 g/cc, Te=Ti=1 eV electronic-to-ionic workflow",
   "data_rights": {
     "origin_type": "project_generated_numerical_output",
@@ -33,13 +33,16 @@
   },
   "producer": {
     "project": "Otter",
-    "git_commit": "f47610cb802699e108248fa7fc138e7cbede282e",
-    "script_relative_path": "docs/examples/plot_al_full_workflow.py",
-    "script_sha256_at_generation": "bcc6a1edada1f366e77b3e5cc0095521bbfff650d627c3a99f922bb1a3cf8c1c",
-    "script_sha256_current": "14f0ffe15cdf8b03b528642c02610f2e1f8d8d69ed1c6740bb88a05932f9104a",
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
+    "script_relative_path": "benchmarks/runners/regenerate_al_full_workflow.py",
+    "script_sha256": "6d05e964f77890bf8ff30db90628aec02da599ca6c59133013fffa451b307bd8",
+    "shared_generator_relative_path": "benchmarks/runners/regenerate_ion_structure_library.py",
+    "shared_generator_sha256": "8145a2c22c3fb9ca5b365f9a2341a3c7caa9d89cbed271ff49df0de7ad1fd8b1",
     "worktree_clean_at_generation": false,
-    "git_status_porcelain_sha256": "cf396e9a37a47a147122eb221712d4ce46947dcc22987dd048d37bf91fd90914",
-    "note": "The complete standalone gallery script generated this reviewed state. Its current revision differs from the generation snapshot only in presentation/backend handling. Script and data SHA-256 values provide integrity; because the source worktree was dirty, this record is not a clean-commit reconstruction."
+    "git_status_porcelain_sha256": "ca0438c8f2a0407b93a215de64594936a5431472b3b90183dabd28f852dc6d2c",
+    "note": "git_commit is a reproducible producer snapshot only when worktree_clean_at_generation is true.",
+    "script_sha256_current": "6d05e964f77890bf8ff30db90628aec02da599ca6c59133013fffa451b307bd8",
+    "script_sha256_at_generation": "4547faee329d0c80fd3024803b14723ed5eb7367ec4313e74106e757196d5b3c"
   },
   "configuration": {
     "element": "Al",
@@ -50,13 +53,13 @@
     "structure_model": "IS",
     "bound_occ_mode": "fd",
     "bound_rmax_mult": null,
-    "bound_zero_tail_refine": true,
+    "bound_zero_tail_refine": false,
     "b3_tail_model": "full",
     "chi0_model": "lindhard_fd",
     "lfc_model": "chabrier1990",
+    "qoz_n_points_before_padding": 4096,
     "qoz_zbar_mode": "pseudoatom_partition",
     "qoz_renormalize_nscr_to_zbar": true,
-    "qoz_n_points_before_padding": 4096,
     "hnc_tolerance": 1e-06,
     "hnc_transform_closure_tolerance": 0.001,
     "hnc_max_iterations": 1000,
@@ -64,20 +67,25 @@
     "k_retained_max_bohr_inv": 20.0
   },
   "scientific_audit": {
-    "zbar_aa_ws": 3.026630150638022,
-    "zbar_partition": 3.0230698957000275,
-    "zbar_qoz": 3.0230698957000275,
-    "q_scr_native_raw": 3.030818639035534,
-    "q_scr_grid_raw": 3.030928376787292,
-    "q_scr_used": 3.0230698957000275,
-    "q_scr_scale_factor": 0.9974072385465345,
-    "hnc_best_residual": 9.444585671473852e-07,
-    "hnc_closure_mismatch": 8.330296917447022e-05,
+    "zbar_aa_ws": 3.026070701841588,
+    "zbar_partition": 3.0228433317026067,
+    "zbar_qoz": 3.0228433317026067,
+    "q_scr_native_raw": 3.028398802488082,
+    "q_scr_grid_raw": 3.0203735392994595,
+    "q_scr_used": 3.0228433317026067,
+    "q_scr_scale_factor": 1.0008127816488288,
+    "hnc_best_residual": 8.058365482413532e-07,
+    "hnc_closure_mismatch": 3.9134630136050674e-05,
     "note": "The gallery plots both the raw interpolated screening cloud and the uniformly charge-corrected cloud used by QOZ."
   },
   "state": {
     "state_id": "al_full_workflow_rho8p1_te1_ti1",
     "data_file": "Al_rho8p1gcc_Te1eV_Ti1eV.npz",
-    "data_sha256": "40acb8c865dd8f33e68e1aaadfc4d8a93ab44501dbee3d00472f328806ad03e1"
+    "data_sha256": "82d4b7007241b01e4d2a9c9402f3005cd6713f30e2286d9fa7481aed8095f791",
+    "zbar_partition": 3.0228433317026067,
+    "hnc_closure_mismatch": 3.9134630136050674e-05,
+    "threshold_state_status": "resolved",
+    "threshold_state_representation": "finite_dirichlet_box",
+    "n_model_points": 2634
   }
 }

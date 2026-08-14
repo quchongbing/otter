@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "otter"
-version = "0.2.0"
+version = "0.2.1"
 description = "Average-atom, pseudoatom, and ionic-structure calculations for dense plasmas."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,6 +36,9 @@ dependencies = [
   "numba>=0.60,<1",
   "matplotlib>=3.8",
 ]
+
+[project.optional-dependencies]
+libxc = ["pylibxc7==7.0.0"]
 
 [tool.poetry.group.dev.dependencies]
 build = ">=1.2"

@@ -26,14 +26,38 @@ def test_carbon_producer_requires_4096_radial_points() -> None:
     assert module._configuration(2.0).n_points == 2**12
     assert module.SCHEMA == "otter_carbon_ionization_levels_v3"
     seeds = module._accepted_seed_rows(module.DENSITIES_G_CC)
-    assert module.DENSITIES_G_CC.size == 72
-    assert module.NEW_DENSITIES_G_CC.size == 0
     assert np.all(np.diff(module.DENSITIES_G_CC) > 0.0)
-    assert np.all(np.isin(module.NEW_DENSITIES_G_CC, module.DENSITIES_G_CC))
-    assert len(seeds) == 72
+    assert np.all(module.DENSITIES_G_CC > 0.0)
+    with np.load(module.BASELINE_PATH, allow_pickle=False) as archive:
+        accepted_rho = np.asarray(archive["rho_g_cc"], dtype=float)
+    expected_seed_count = np.count_nonzero(
+        np.isin(accepted_rho, module.DENSITIES_G_CC)
+    )
+    assert len(seeds) == expected_seed_count
     assert {row["point_source"] for row in seeds} == {
         "accepted_baseline_seed"
     }
+
+
+def test_main_extends_a_changed_density_grid_incrementally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_example_module()
+    staged_state = {"state": np.asarray("candidate")}
+    observed: list[dict[str, np.ndarray]] = []
+
+    def mismatch():
+        raise module.DensityGridMismatchError("changed grid")
+
+    monkeypatch.setattr(module, "RECOMPUTE_WITH_OTTER", False)
+    monkeypatch.setattr(module, "_load_precomputed", mismatch)
+    monkeypatch.setattr(module, "_compute_and_stage", lambda: staged_state)
+    monkeypatch.setattr(module, "_print_state_table", observed.append)
+    monkeypatch.setattr(module, "_plot", observed.append)
+
+    module.main()
+
+    assert observed == [staged_state, staged_state]
 
 
 def test_failed_point_cache_keeps_nonconvergence_out_of_aa_results(

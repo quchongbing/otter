@@ -62,10 +62,17 @@ PHYSICAL_DEFINITIONS = {
         "rho_g_cc": 40.0,
         "te_ev": 10.0,
         "ti_ev": 10.0,
-        "reference_files": (
-            "gii_W_40gcc_10.0ev_starrett.csv",
-            "gii_W_40gcc_10.0ev_starrett_TF.csv",
-        ),
+        "reference_file": "gii_W_40gcc_10.0ev_starrett_TF.csv",
+        "reference_unit": "Bohr",
+    },
+    "w_60": {
+        "panel_id": "w_60",
+        "element": "W",
+        "atomic_mass": 183.84,
+        "rho_g_cc": 40.0,
+        "te_ev": 60.0,
+        "ti_ev": 60.0,
+        "reference_file": "gii_W_40gcc_60.0ev_starrett.csv",
         "reference_unit": "Bohr",
     },
 }
@@ -163,18 +170,7 @@ def test_baseline_coverage_and_strict_promotion_are_explicit() -> None:
         state_id
         for state_id, record in records.items()
         if record["status"] == "accepted"
-    } == {
-        "fe_10_tf",
-        "h_5_qm",
-        "h_5_tf",
-        "h_172_qm",
-        "h_172_tf",
-        "c_64p64_qm",
-        "c_64p64_tf",
-        "w_10_tf",
-    }
-    for state_id in ("fe_10_qm", "w_10_qm", "w_60_qm", "w_60_tf"):
-        assert records[state_id]["status"] == "strict_hnc_rejected"
+    } == set(STATE_DEFINITIONS)
     for record in records.values():
         if record["status"] != "accepted":
             assert record["baseline_file"] is None

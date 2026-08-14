@@ -1,13 +1,10 @@
 cff-version: 1.2.0
 message: >-
-  If you use Otter in published work, please cite the software and the
-  model papers identified by the documentation for the features you use.
-  The repository-wide key registry and contributor policy are in
-  CITATIONS.md; generated workflows expose the same keys through
-  config.citation(style="plain"|"bibtex"|"cite").
+  If you use Otter in a scientific publication, please cite this software.
 title: Otter
 type: software
-version: 0.2.0
+version: 0.2.1
+date-released: 2026-08-14
 authors:
   - family-names: Qu
     given-names: Chongbing
@@ -24,7 +21,8 @@ keywords:
 preferred-citation:
   type: software
   title: Otter
-  version: 0.2.0
+  version: 0.2.1
+  date-released: 2026-08-14
   authors:
     - family-names: Qu
       given-names: Chongbing

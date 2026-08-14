@@ -49,6 +49,33 @@ Clone the repository and install from the lock file:
 ``poetry install`` installs the locked dependencies and Otter in editable
 mode.
 
+The default local-density Dirac exchange model requires no optional package.
+Libxc is needed only for additional LDA correlation and GGA functionals. To
+enable them, install the ``libxc`` extra:
+
+.. code-block:: console
+
+   $ poetry install --extras libxc
+
+PyPI currently distributes ``pylibxc7`` as source rather than as platform
+wheels. This optional installation therefore requires CMake and a C compiler;
+Conda is not required. Poetry downloads, builds, and installs the bindings in
+Otter's environment. Platform-specific prerequisites are listed in
+:doc:`user_guide/xc_functionals`.
+
+For a manual source installation in Otter's Poetry environment:
+
+.. code-block:: console
+
+   $ git clone --branch 7.0.0 --depth 1 https://gitlab.com/libxc/libxc.git
+   $ poetry run python -m pip install ./libxc
+
+The manual command above requires the same CMake/C-compiler toolchain. The
+`official Libxc installation guide <https://libxc.gitlab.io/installation/>`_
+documents the prerequisites. The detailed Otter XC guide explains model
+selection and installation:
+:doc:`user_guide/xc_functionals`.
+
 Run commands inside the managed environment with ``poetry run``:
 
 .. code-block:: console

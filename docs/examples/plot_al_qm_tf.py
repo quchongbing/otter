@@ -28,6 +28,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import ExitStack
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
 
@@ -42,6 +43,8 @@ from otter.plotting import grid_figsize, save_figure, style_context
 # User input
 # =============================================================================
 RECOMPUTE_WITH_OTTER = False
+if os.environ.get("OTTER_RECOMPUTE_AL_QM_TF", "0") == "1":
+    RECOMPUTE_WITH_OTTER = True
 USE_PRECOMPUTED_DATA = not RECOMPUTE_WITH_OTTER
 
 RHO_G_CC = 8.1
@@ -51,9 +54,6 @@ ELECTRONIC_MODELS = ("qm", "tf")
 # Four state workers x four continuum workers use at most about 16 workers.
 MAX_STATE_WORKERS = 4
 CONTINUUM_WORKERS_PER_STATE = 4
-AA_N_POINTS = 1024
-QOZ_N_POINTS = 4096
-
 HNC_TOL = 1.0e-6
 HNC_CLOSURE_TOL = 1.0e-3
 R_RETAIN_MAX_BOHR = 20.0
@@ -137,25 +137,12 @@ def workflow_config(temperature_ev: float, model: str) -> PlasmaWorkflowConfig:
         rho_g_cc=float(RHO_G_CC),
         electronic_model=str(model),
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
         hnc_tol=float(HNC_TOL),
         hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -333,12 +320,7 @@ styles = {"qm": "-", "tf": "--"}
 fig_density, density_axes = plt.subplots(
     len(states),
     2,
-    figsize=grid_figsize(
-        len(states),
-        2,
-        cell_width=5.0,
-        cell_height=2.2,
-    ),
+    figsize=grid_figsize(len(states), 2),
     squeeze=False,
 )
 for row, state in enumerate(states):
@@ -382,7 +364,7 @@ for row, state in enumerate(states):
         + "\n"
         + r"$4\pi r^2 n(r)$ [Bohr$^{-1}$]"
     )
-    density_axes[row, 0].set_xlim(-0.5, 4.0)
+    density_axes[row, 0].set_xlim(-0.2, 4.0)
     density_axes[row, 1].set_xlim(-0.5, 12.0)
 
 density_titles = (r"$n_{\rm full}-n_0$", "screening density")
@@ -408,12 +390,7 @@ fig_density.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
 fig_ionic, ionic_axes = plt.subplots(
     len(states),
     2,
-    figsize=grid_figsize(
-        len(states),
-        2,
-        cell_width=5.0,
-        cell_height=2.2,
-    ),
+    figsize=grid_figsize(len(states), 2),
     squeeze=False,
 )
 for row, state in enumerate(states):

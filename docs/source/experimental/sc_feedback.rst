@@ -72,7 +72,6 @@ Minimal diagnostic use
        temperature_ev=20.0,
        ion_temperature_ev=20.0,
        rho_g_cc=3.7,
-       aa_overrides={"bound_occ_mode": "fd"},
    )
 
    is_result = solve_plasma_workflow(config)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tomllib
+
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, __version__
@@ -15,6 +18,12 @@ def test_public_imports() -> None:
     assert isinstance(QOZPotentialOptions(), QOZPotentialOptions)
     assert isinstance(__version__, str)
     assert __version__
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert __version__ == pyproject["project"]["version"]
 
 
 def test_core_helpers_are_callable() -> None:

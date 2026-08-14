@@ -374,7 +374,7 @@ def plot_states(loaded: list[dict[str, np.ndarray]]) -> None:
     fig, axes = plt.subplots(
         len(loaded),
         5,
-        figsize=(18.0, 3.6 * len(loaded)),
+        figsize=otter_plotting.grid_figsize(len(loaded), 5),
         squeeze=False,
     )
     for row, data in enumerate(loaded):
@@ -436,8 +436,8 @@ def plot_states(loaded: list[dict[str, np.ndarray]]) -> None:
         strict=True,
     ):
         axis.set_title(title)
-    axes[0, 0].legend(fontsize=8)
-    axes[0, 4].legend(fontsize=7.5)
+    axes[0, 0].legend(fontsize="small")
+    axes[0, 4].legend(fontsize="small")
     for axis, label in zip(
         axes[-1],
         (

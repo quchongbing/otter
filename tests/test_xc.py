@@ -281,7 +281,10 @@ def test_missing_pylibxc_has_actionable_error(
     xc._make_libxc_functional.cache_clear()
     monkeypatch.setattr(xc, "import_module", missing)
     try:
-        with pytest.raises(xc.LibXCUnavailableError, match="conda-forge pylibxc"):
+        with pytest.raises(
+            xc.LibXCUnavailableError,
+            match="poetry install --extras libxc",
+        ):
             xc.xc_potential(np.array([0.1]), model="libxc:lda_x")
     finally:
         xc._make_libxc_functional.cache_clear()

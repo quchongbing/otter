@@ -205,6 +205,23 @@ STATE_TITLES = {
     ),
 }
 
+OTTER_SERIES = {
+    state_id: ((state_id, "Otter KS", "-"),)
+    for state_id in REFERENCE_SERIES
+}
+OTTER_SERIES.update(
+    {
+        "al_clerouin_rho8p1_te10_ti10": (
+            ("al_clerouin_rho8p1_te10_ti10", "Otter KS", "-"),
+            ("al_clerouin_rho8p1_te10_ti10_tf", "Otter TF", "--"),
+        ),
+        "al_clerouin_rho8p1_te10_ti2": (
+            ("al_clerouin_rho8p1_te10_ti2", "Otter KS", "-"),
+            ("al_clerouin_rho8p1_te10_ti2_tf", "Otter TF", "--"),
+        ),
+    }
+)
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -220,9 +237,12 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
         raise ValueError("Unsupported benchmark manifest schema.")
     if manifest.get("benchmark_id") != "ion_structure_library":
         raise ValueError("Unexpected benchmark identifier.")
-    if {state["state_id"] for state in manifest["states"]} != set(
-        REFERENCE_SERIES
-    ):
+    expected = {
+        result_id
+        for branches in OTTER_SERIES.values()
+        for result_id, _, _ in branches
+    }
+    if {state["state_id"] for state in manifest["states"]} != expected:
         raise ValueError("Manifest and reference state maps differ.")
     return manifest
 
@@ -304,35 +324,41 @@ def evaluate(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for state_id, series_list in REFERENCE_SERIES.items():
-        state = states[state_id]
-        for series in series_list:
-            x_ref, y_ref = load_reference(series)
-            x_otter, y_otter = _otter_curve(
-                state,
-                series["observable"],
-                series["x_unit"],
-            )
-            mask = (x_ref >= x_otter[0]) & (x_ref <= x_otter[-1])
-            if not np.any(mask):
-                raise ValueError(f"No overlap for {state_id}: {series['label']}")
-            delta = np.interp(x_ref[mask], x_otter, y_otter) - y_ref[mask]
-            rows.append(
-                {
-                    "state_id": state_id,
-                    "observable": series["observable"],
-                    "reference": series["label"],
-                    "role": series["role"],
-                    "n_points": int(np.count_nonzero(mask)),
-                    "rmse": float(np.sqrt(np.mean(delta**2))),
-                    "mae": float(np.mean(np.abs(delta))),
-                    "max_abs": float(np.max(np.abs(delta))),
-                    "zbar_partition": float(state["zbar_partition"]),
-                    "hnc_residual": float(state["hnc_best_residual"]),
-                    "closure_mismatch": float(
-                        state["hnc_closure_mismatch"]
-                    ),
-                }
-            )
+        for result_id, model_label, _ in OTTER_SERIES[state_id]:
+            state = states[result_id]
+            for series in series_list:
+                x_ref, y_ref = load_reference(series)
+                x_otter, y_otter = _otter_curve(
+                    state,
+                    series["observable"],
+                    series["x_unit"],
+                )
+                mask = (x_ref >= x_otter[0]) & (x_ref <= x_otter[-1])
+                if not np.any(mask):
+                    raise ValueError(
+                        f"No overlap for {result_id}: {series['label']}"
+                    )
+                delta = (
+                    np.interp(x_ref[mask], x_otter, y_otter) - y_ref[mask]
+                )
+                rows.append(
+                    {
+                        "state_id": state_id,
+                        "otter_model": model_label,
+                        "observable": series["observable"],
+                        "reference": series["label"],
+                        "role": series["role"],
+                        "n_points": int(np.count_nonzero(mask)),
+                        "rmse": float(np.sqrt(np.mean(delta**2))),
+                        "mae": float(np.mean(np.abs(delta))),
+                        "max_abs": float(np.max(np.abs(delta))),
+                        "zbar_partition": float(state["zbar_partition"]),
+                        "hnc_residual": float(state["hnc_best_residual"]),
+                        "closure_mismatch": float(
+                            state["hnc_closure_mismatch"]
+                        ),
+                    }
+                )
     return rows
 
 
@@ -373,26 +399,35 @@ def _plot_observable(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(11.0, 4.1 * nrows),
+        figsize=otter_plotting.grid_figsize(nrows, 2),
         squeeze=False,
     )
     marker_cycle = ("o", "s", "^", "x")
     reference_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for panel, state_id in enumerate(state_ids):
         ax = axes.ravel()[panel]
-        state = states[state_id]
         series_for_observable = [
             item
             for item in REFERENCE_SERIES[state_id]
             if item["observable"] == observable
         ]
         display_unit = str(series_for_observable[0]["x_unit"])
-        x_otter, y_otter = _otter_curve(
-            state,
-            observable,
-            display_unit,
-        )
-        ax.plot(x_otter, y_otter, color="black", lw=2.1, label="Otter")
+        for model_index, (result_id, label, line_style) in enumerate(
+            OTTER_SERIES[state_id]
+        ):
+            x_otter, y_otter = _otter_curve(
+                states[result_id],
+                observable,
+                display_unit,
+            )
+            ax.plot(
+                x_otter,
+                y_otter,
+                color="black" if model_index == 0 else "#D55E00",
+                ls=line_style,
+                lw=2.1,
+                label=label,
+            )
         reference_x: list[np.ndarray] = []
         for index, series in enumerate(series_for_observable):
             x_ref, y_ref = load_reference(series)
@@ -447,7 +482,7 @@ def _plot_observable(
         else:
             ax.axhline(1.0, color="0.55", lw=0.8, ls=":")
         ax.grid(alpha=0.2)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize="small")
     for panel in range(len(state_ids), axes.size):
         axes.ravel()[panel].set_visible(False)
     fig.suptitle(

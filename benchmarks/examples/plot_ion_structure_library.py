@@ -34,6 +34,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import ExitStack
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -58,16 +59,14 @@ from otter.plotting import (
 # User input
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
+if os.environ.get("OTTER_RECOMPUTE_ION_STRUCTURE_LIBRARY", "0") == "1":
+    USE_PRECOMPUTED_DATA = False
 
 # Three independent state groups, each with six continuum workers.  The two
 # Al 8.1-g/cc states share one electronic calculation because only the ion
 # temperature differs.
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
-AA_N_POINTS = 1024
-QOZ_N_POINTS = 4096
-
-LFC_MODEL = "chabrier1990"
 HNC_TOL = 1.0e-4
 HNC_CLOSURE_TOL = 2.5e-3
 R_RETAIN_MAX_BOHR = 20.0
@@ -101,6 +100,24 @@ STATE_GROUPS: dict[str, tuple[dict[str, Any], ...]] = {
             "rho_g_cc": 8.1,
             "te_ev": 10.0,
             "ti_ev": 2.0,
+        },
+    ),
+    "al_clerouin_tf": (
+        {
+            "state_id": "al_clerouin_rho8p1_te10_ti10_tf",
+            "element": "Al",
+            "rho_g_cc": 8.1,
+            "te_ev": 10.0,
+            "ti_ev": 10.0,
+            "electronic_model": "tf",
+        },
+        {
+            "state_id": "al_clerouin_rho8p1_te10_ti2_tf",
+            "element": "Al",
+            "rho_g_cc": 8.1,
+            "te_ev": 10.0,
+            "ti_ev": 2.0,
+            "electronic_model": "tf",
         },
     ),
     "be_wunsch": (
@@ -280,6 +297,23 @@ STATE_TITLES = {
     ),
 }
 
+OTTER_SERIES = {
+    state_id: ((state_id, "Otter KS", "-"),)
+    for state_id in REFERENCE_SERIES
+}
+OTTER_SERIES.update(
+    {
+        "al_clerouin_rho8p1_te10_ti10": (
+            ("al_clerouin_rho8p1_te10_ti10", "Otter KS", "-"),
+            ("al_clerouin_rho8p1_te10_ti10_tf", "Otter TF", "--"),
+        ),
+        "al_clerouin_rho8p1_te10_ti2": (
+            ("al_clerouin_rho8p1_te10_ti2", "Otter KS", "-"),
+            ("al_clerouin_rho8p1_te10_ti2_tf", "Otter TF", "--"),
+        ),
+    }
+)
+
 
 def repository_root() -> Path:
     """Locate the Otter checkout when run directly or by Sphinx-Gallery."""
@@ -368,27 +402,14 @@ def workflow_config(
             None if ion_temperature_ev is None else float(ion_temperature_ev)
         ),
         rho_g_cc=float(state["rho_g_cc"]),
-        electronic_model="qm",
+        electronic_model=str(state.get("electronic_model", "qm")),
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model=str(LFC_MODEL),
         hnc_tol=float(HNC_TOL),
         hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
         hnc_max_iter=500,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -430,6 +451,9 @@ def pack_result(
     return {
         "schema_version": np.asarray("otter_gallery_ion_library_v1"),
         "state_id": np.asarray(str(state["state_id"])),
+        "electronic_model": np.asarray(
+            str(state.get("electronic_model", "qm"))
+        ),
         "element": np.asarray(str(state["element"])),
         "rho_g_cc": np.asarray(float(state["rho_g_cc"])),
         "te_ev": np.asarray(float(state["te_ev"])),
@@ -543,26 +567,30 @@ def otter_curve(
 
 def print_metrics(states: dict[str, dict[str, np.ndarray]]) -> None:
     print(
-        f"{'state':42s} {'obs':>3s} {'reference':19s} "
+        f"{'state':42s} {'model':10s} {'obs':>3s} {'reference':19s} "
         f"{'RMSE':>10s} {'MAE':>10s} {'max':>10s}"
     )
     for state_id, series_list in REFERENCE_SERIES.items():
-        for series in series_list:
-            x_ref, y_ref = load_reference(series)
-            x_otter, y_otter = otter_curve(
-                states[state_id],
-                str(series["observable"]),
-                str(series["x_unit"]),
-            )
-            mask = (x_ref >= x_otter[0]) & (x_ref <= x_otter[-1])
-            delta = np.interp(x_ref[mask], x_otter, y_otter) - y_ref[mask]
-            print(
-                f"{state_id:42s} {series['observable']:>3s} "
-                f"{series['label'][:19]:19s} "
-                f"{np.sqrt(np.mean(delta**2)):10.4e} "
-                f"{np.mean(np.abs(delta)):10.4e} "
-                f"{np.max(np.abs(delta)):10.4e}"
-            )
+        for result_id, model_label, _ in OTTER_SERIES[state_id]:
+            for series in series_list:
+                x_ref, y_ref = load_reference(series)
+                x_otter, y_otter = otter_curve(
+                    states[result_id],
+                    str(series["observable"]),
+                    str(series["x_unit"]),
+                )
+                mask = (x_ref >= x_otter[0]) & (x_ref <= x_otter[-1])
+                delta = (
+                    np.interp(x_ref[mask], x_otter, y_otter) - y_ref[mask]
+                )
+                print(
+                    f"{state_id:42s} {model_label:10s} "
+                    f"{series['observable']:>3s} "
+                    f"{series['label'][:19]:19s} "
+                    f"{np.sqrt(np.mean(delta**2)):10.4e} "
+                    f"{np.mean(np.abs(delta)):10.4e} "
+                    f"{np.max(np.abs(delta)):10.4e}"
+                )
 
 
 states = (
@@ -592,12 +620,7 @@ def plot_observable(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=grid_figsize(
-            nrows,
-            ncols,
-            cell_width=5.1,
-            cell_height=3.8,
-        ),
+        figsize=grid_figsize(nrows, ncols),
         squeeze=False,
     )
     marker_cycle = ("o", "s", "^", "x")
@@ -610,17 +633,19 @@ def plot_observable(
             if item["observable"] == observable
         ]
         display_unit = str(series_list[0]["x_unit"])
-        x_otter, y_otter = otter_curve(
-            states[state_id],
-            observable,
-            display_unit,
-        )
-        axis.plot(
-            x_otter,
-            y_otter,
-            label="Otter",
-            **dict(MODEL_STYLES["otter"]),
-        )
+        for model_index, (result_id, label, line_style) in enumerate(
+            OTTER_SERIES[state_id]
+        ):
+            x_otter, y_otter = otter_curve(
+                states[result_id],
+                observable,
+                display_unit,
+            )
+            style = dict(MODEL_STYLES["otter"])
+            style["linestyle"] = line_style
+            if model_index:
+                style["color"] = "#D55E00"
+            axis.plot(x_otter, y_otter, label=label, **style)
         reference_x: list[np.ndarray] = []
         for index, series in enumerate(series_list):
             x_ref, y_ref = load_reference(series)
@@ -660,7 +685,7 @@ def plot_observable(
         )
         axis.set_xlim(left, float(np.max(all_reference_x)) + margin)
         axis.axhline(1.0, color="0.55", lw=0.8, ls=":")
-        axis.legend(fontsize=8)
+        axis.legend(fontsize="small")
     for panel in range(len(state_ids), axes.size):
         axes.ravel()[panel].set_visible(False)
     fig.suptitle("Otter QOZ/HNC versus curated literature curves", y=0.985)

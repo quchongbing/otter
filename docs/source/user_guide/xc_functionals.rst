@@ -1,24 +1,51 @@
 Exchange-correlation functionals
 ================================
 
-Otter keeps the spin-unpolarized Dirac exchange model as its dependency-free
-default.  Optional Libxc bindings add ground-state LDA and GGA functionals to
-both the orbital Kohn--Sham and Thomas--Fermi full/external solvers.
+Otter keeps the spin-unpolarized, local-density Dirac exchange model as its
+dependency-free default. It is used by the validated warm- and
+hot-dense-matter workflows. Optional Libxc bindings add LDA correlation and
+GGA functionals to both the orbital Kohn--Sham and Thomas--Fermi
+full/external solvers.
 
 Installation
 ------------
 
 Libxc is optional, so importing and running the default model does not require
-it.  Install the Python bindings from conda-forge before selecting a Libxc
-model:
+it. Install the locked optional dependency with Poetry:
+
+.. code-block:: console
+
+   poetry install --extras libxc
+
+The PyPI distribution is named ``pylibxc7`` and provides the ``pylibxc``
+Python module used by Otter. PyPI currently supplies a source archive rather
+than platform wheels. CMake and a C compiler are therefore required, but
+Conda is not. Poetry downloads, builds, and installs the bindings in Otter's
+environment.
+
+Install the build tools before running the Poetry command:
+
+* Ubuntu, Debian, or WSL: ``sudo apt install build-essential cmake``;
+* macOS: install the Xcode command-line tools with ``xcode-select --install``
+  and CMake with ``brew install cmake``;
+* native Windows: install CMake and the Visual Studio C++ Build Tools, or use
+  WSL if a native source build is unavailable.
+
+The Libxc project documents its build procedure and available functionals at
+https://libxc.gitlab.io/installation/ and
+https://libxc.gitlab.io/functionals/.
+
+To build the bindings from the Libxc 7.0.0 source tree inside Otter's Poetry
+environment:
 
 .. code-block:: bash
 
-   conda install -c conda-forge pylibxc
+   git clone --branch 7.0.0 --depth 1 https://gitlab.com/libxc/libxc.git
+   poetry run python -m pip install ./libxc
 
-The Libxc project documents its Python interface and available functionals at
-https://libxc.gitlab.io/installation/ and
-https://libxc.gitlab.io/functionals/.
+The clone may be removed after installation. The manual build uses the same
+CMake/C-compiler toolchain as the Poetry extra, and the resulting ``pylibxc``
+module is installed directly in Otter's Poetry environment.
 
 Citation and provenance
 -----------------------

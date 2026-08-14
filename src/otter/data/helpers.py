@@ -73,10 +73,16 @@ def grid_step_from_r(r: np.ndarray, grid_kind: str) -> float:
 
 
 def trapz_integral(y: np.ndarray, x: np.ndarray) -> float:
-    """Return trapezoidal integral using numpy.trapezoid or numpy.trapz."""
-    if hasattr(np, "trapezoid"):
-        return float(np.trapezoid(y, x))
-    return float(np.trapz(y, x))
+    """Return a version-independent one-dimensional trapezoidal integral."""
+    y_arr = np.asarray(y, dtype=float)
+    x_arr = np.asarray(x, dtype=float)
+    if y_arr.ndim != 1 or x_arr.ndim != 1 or y_arr.size != x_arr.size:
+        raise ValueError("trapz_integral requires equal one-dimensional arrays.")
+    if y_arr.size < 2:
+        return 0.0
+    return float(
+        np.sum(0.5 * (y_arr[1:] + y_arr[:-1]) * np.diff(x_arr))
+    )
 
 
 def ion_level_weight(energy: float, gamma: float) -> float:

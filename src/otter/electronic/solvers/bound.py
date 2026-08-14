@@ -857,6 +857,14 @@ def _solve_single_l_sparse(v_eff: np.ndarray,
     H_use = H_sparse[:-1, :-1]
     S_use = S_sparse[:-1, :-1]
 
+    # ARPACK otherwise creates a random start vector.  That makes a
+    # near-threshold eigenvalue classification depend on unrelated eigensolves
+    # performed earlier in the same process.  A local generator avoids global
+    # RNG state while retaining a broadband start vector for shift-invert.
+    seed = 0x5EED + int(H_use.shape[0]) + 1009 * int(l)
+    v0 = np.random.default_rng(seed).standard_normal(H_use.shape[0])
+    v0 /= np.linalg.norm(v0)
+
     try:
         vals, vecs = eigs(
             H_use,
@@ -865,6 +873,7 @@ def _solve_single_l_sparse(v_eff: np.ndarray,
             sigma=sigma_used,
             which="LM",
             tol=1e-10,
+            v0=v0.copy(),
         )
     except Exception as exc:
         if sigma_guess is None:
@@ -879,6 +888,7 @@ def _solve_single_l_sparse(v_eff: np.ndarray,
                     sigma=sigma_fallback,
                     which="LM",
                     tol=1e-10,
+                    v0=v0.copy(),
                 )
             except Exception as exc_retry:
                 warnings.warn(

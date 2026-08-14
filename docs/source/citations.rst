@@ -1,19 +1,22 @@
 Citing Otter
 ============
 
-Otter separates the software citation from the papers that define the
-physical models selected for a calculation. Cite the software using
-``CITATION.cff`` and cite the model papers listed by the calculation's
-configuration object. The complete contributor policy and registry is kept
-in the repository root: :download:`CITATIONS.md <../../CITATIONS.md>`.
+If you use Otter in a scientific publication, please cite Chongbing Qu,
+*Otter*, version 0.2.1, computer software (2026),
+https://github.com/quchongbing/otter.
+
+The same metadata are provided in ``CITATION.cff`` and through GitHub's
+**Cite this repository** menu. Model references document scientific
+provenance; they are not additional software-citation requirements.
+
+The complete reference registry is kept in the repository root:
+:download:`CITATIONS.md <../../CITATIONS.md>`.
 
 Runtime citation API
 --------------------
 
-Electronic, ionic, workflow, and mixture configuration objects expose the
-same three-style API used by JaXRTS model objects (see the upstream
-``Model.citation`` implementation in
-`jaxrts/models.py <https://github.com/JaXRTS/jaxrts/blob/main/src/jaxrts/models.py>`__):
+Electronic, ionic, workflow, and mixture configuration objects expose a
+three-style provenance API:
 
 .. code-block:: python
 
@@ -34,8 +37,8 @@ applications that need to build their own reports.
 
 .. autofunction:: otter.literature.write_citations_markdown
 
-Citation rules for contributors
--------------------------------
+Reference rules for contributors
+--------------------------------
 
 * Add a stable key, authors, year, and DOI to ``src/otter/literature.bib``
   before introducing a new literature reference.

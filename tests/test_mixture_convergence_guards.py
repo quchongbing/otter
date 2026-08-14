@@ -32,6 +32,16 @@ def _fake_species_result(cfg_species, *, mu: float, converged: bool) -> dict:
     }
 
 
+def test_mixture_defaults_to_one_parallel_worker_per_species() -> None:
+    cfg = MixtureConfig(
+        species=["C", "H"],
+        counts=[1.0, 1.36],
+        temperature_ev=10.0,
+        rho_g_cc=2.94,
+    )
+    assert cfg.species_parallel_jobs == 2
+
+
 def test_unconverged_species_result_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
     """An exact-theta revisit should retry a failed species AA solve."""
     calls = {"H": 0, "C": 0}
@@ -83,6 +93,7 @@ def test_unresolved_threshold_species_is_not_a_root_or_cache_sample(
     cfg = MixtureConfig(
         species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
         rho_g_cc=1.0, species_parallel_jobs=1, save_data=False,
+        root_threshold_refine_retry=False,
     )
     evaluator = mixmod._MixtureEvaluator(cfg)
     theta = np.asarray([0.0], dtype=float)
@@ -147,6 +158,167 @@ def test_unresolved_threshold_warm_start_is_retried_cold(
     assert evaluator._species_threshold_cold_retries == 1
 
 
+def test_threshold_failure_is_retried_with_physical_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shallow full-AA failure gets one cold, physical-domain retry."""
+    calls: dict[str, list[dict[str, float | bool | int]]] = {"H": [], "C": []}
+
+    def _fake_full(cfg_species):
+        symbol = str(mixmod.element_info(cfg_species.element).symbol)
+        calls[symbol].append({
+            "refine": bool(cfg_species.bound_zero_tail_refine),
+            "max_binding": float(cfg_species.bound_zero_tail_max_binding_ha),
+            "scan_points": int(cfg_species.bound_zero_tail_scan_points),
+            "edge_tol": float(cfg_species.bound_zero_tail_edge_rel_tol),
+            "mix": float(cfg_species.scf_mix),
+            "w0": float(cfg_species.scf_mixing_w0),
+            "stage1_max_iter": int(cfg_species.stage1_max_iter),
+            "max_iter": int(cfg_species.stage2_max_iter),
+            "dn_tol": float(cfg_species.scf_dn_tol),
+            "dv_tol": float(cfg_species.scf_dv_tol),
+            "warm": bool(cfg_species.v_full_init is not None),
+        })
+        recovered = symbol != "H" or bool(cfg_species.bound_zero_tail_refine)
+        result = _fake_species_result(cfg_species, mu=0.0, converged=recovered)
+        result["threshold_state_status"] = "resolved" if recovered else "unresolved"
+        result["shallowest_bound_energy_ha"] = -2.0e-3
+        return result
+
+    monkeypatch.setattr(mixmod, "solve_full_only", _fake_full)
+    cfg = MixtureConfig(
+        species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
+        rho_g_cc=1.0, species_parallel_jobs=1, save_data=False,
+    )
+    evaluator = mixmod._MixtureEvaluator(cfg)
+    try:
+        record = evaluator.evaluate(np.asarray([0.0], dtype=float))
+    finally:
+        evaluator.close()
+
+    assert mixmod._record_species_results_are_converged(record)
+    h_result = dict(record["results"][0])
+    assert h_result["mixture_threshold_refine_retry_attempted"] is True
+    assert h_result["mixture_threshold_refine_retry_selected"] is True
+    assert h_result["mixture_threshold_refine_retry_initial_reasons"] == (
+        "stage2_unconverged",
+        "threshold_state_unresolved",
+    )
+    assert len(calls["H"]) == 2
+    retry = calls["H"][1]
+    assert retry["refine"] is True
+    assert retry["max_binding"] >= 1.0e-2
+    assert retry["scan_points"] == 24
+    assert retry["edge_tol"] == pytest.approx(0.25)
+    assert retry["mix"] == pytest.approx(0.15)
+    assert retry["w0"] == pytest.approx(5.0e-4)
+    assert retry["stage1_max_iter"] == 0
+    assert retry["max_iter"] >= 300
+    assert retry["dn_tol"] <= 1.0e-6
+    assert retry["dv_tol"] <= 1.0e-6
+    assert retry["warm"] is False
+    assert evaluator._species_threshold_refine_retries == 1
+
+
+def test_nonthreshold_scf_failure_does_not_use_threshold_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guarded retry must not modify an ordinary failed AA point."""
+    calls = {"H": 0, "C": 0}
+
+    def _fake_full(cfg_species):
+        symbol = str(mixmod.element_info(cfg_species.element).symbol)
+        calls[symbol] += 1
+        result = _fake_species_result(
+            cfg_species, mu=0.0, converged=symbol != "H"
+        )
+        result["threshold_state_status"] = "resolved"
+        result["shallowest_bound_energy_ha"] = -1.0
+        return result
+
+    monkeypatch.setattr(mixmod, "solve_full_only", _fake_full)
+    cfg = MixtureConfig(
+        species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
+        rho_g_cc=1.0, species_parallel_jobs=1, save_data=False,
+    )
+    evaluator = mixmod._MixtureEvaluator(cfg)
+    try:
+        record = evaluator.evaluate(np.asarray([0.0], dtype=float))
+    finally:
+        evaluator.close()
+
+    assert not mixmod._record_species_results_are_converged(record)
+    assert calls == {"H": 1, "C": 1}
+    assert evaluator._species_threshold_refine_retries == 0
+
+
+def test_bound_charge_branch_flips_trigger_threshold_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A final continuum frame must not hide repeated threshold crossings."""
+    calls = {"H": 0, "C": 0}
+
+    def _fake_full(cfg_species):
+        symbol = str(mixmod.element_info(cfg_species.element).symbol)
+        calls[symbol] += 1
+        recovered = symbol != "H" or bool(cfg_species.bound_zero_tail_refine)
+        result = _fake_species_result(cfg_species, mu=0.0, converged=recovered)
+        result["threshold_state_status"] = "resolved"
+        result["shallowest_bound_energy_ha"] = -1.0
+        if symbol == "H" and not recovered:
+            charges = [2.0, 2.24, 2.0, 2.24, 2.0, 2.24, 2.0, 2.24]
+            result["history"] = [
+                {"err": 1.0e-2, "charge_bound": value}
+                for value in charges
+            ]
+        return result
+
+    monkeypatch.setattr(mixmod, "solve_full_only", _fake_full)
+    cfg = MixtureConfig(
+        species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
+        rho_g_cc=1.0, species_parallel_jobs=1, save_data=False,
+    )
+    evaluator = mixmod._MixtureEvaluator(cfg)
+    try:
+        record = evaluator.evaluate(np.asarray([0.0], dtype=float))
+    finally:
+        evaluator.close()
+
+    assert mixmod._record_species_results_are_converged(record)
+    assert calls == {"H": 2, "C": 1}
+    h_result = dict(record["results"][0])
+    assert h_result["mixture_threshold_refine_retry_selected"] is True
+
+
+def test_common_mu_evaluator_uses_full_aa_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """External AA is not part of the common-chemical-potential root."""
+    calls: list[tuple[str, bool]] = []
+
+    def _fake_full(cfg_species):
+        calls.append((str(cfg_species.run_mode), bool(cfg_species.ext_scf_enabled)))
+        return _fake_species_result(cfg_species, mu=0.0, converged=True)
+
+    def _forbid_external(_cfg_species):
+        raise AssertionError("common-mu evaluation called external AA")
+
+    monkeypatch.setattr(mixmod, "solve_full_only", _fake_full)
+    monkeypatch.setattr(mixmod, "solve_full_then_external", _forbid_external)
+    cfg = MixtureConfig(
+        species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
+        rho_g_cc=1.0, species_parallel_jobs=1, save_data=False,
+    )
+    evaluator = mixmod._MixtureEvaluator(cfg)
+    try:
+        record = evaluator.evaluate(np.asarray([0.0], dtype=float))
+    finally:
+        evaluator.close()
+
+    assert mixmod._record_species_results_are_converged(record)
+    assert calls == [("full", False), ("full", False)]
+
+
 def test_unresolved_auto_b3_threshold_is_retried_with_a_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -174,6 +346,7 @@ def test_unresolved_auto_b3_threshold_is_retried_with_a_only(
             "b3_tail_model": "auto",
             "b3_tail_target": "full",
         },
+        root_threshold_refine_retry=False,
     )
     evaluator = mixmod._MixtureEvaluator(cfg)
     try:
@@ -257,6 +430,7 @@ def test_explicit_full_b3_threshold_uses_root_only_a_only_surrogate(
             "b3_tail_model": "full",
             "b3_tail_target": "full",
         },
+        root_threshold_refine_retry=False,
     )
     evaluator = mixmod._MixtureEvaluator(cfg)
     try:
@@ -303,6 +477,7 @@ def test_explicit_full_b3_threshold_surrogate_can_be_disabled(
             "b3_tail_target": "full",
         },
         root_threshold_b3_surrogate_mode="off",
+        root_threshold_refine_retry=False,
     )
     evaluator = mixmod._MixtureEvaluator(cfg)
     try:
@@ -348,6 +523,7 @@ def test_full_b3_root_surrogate_is_verified_with_requested_model(
             "b3_tail_target": "full",
         },
         volume_weights_init=[0.5, 0.5],
+        root_threshold_refine_retry=False,
     )
 
     result = mixmod.solve_mixture_full_only(cfg)
@@ -470,6 +646,7 @@ def test_final_species_config_preserves_selected_a_only_threshold_retry() -> Non
     full_result = {
         "r": np.asarray([0.1, 1.0, 2.0]),
         "v_full": np.asarray([-1.0, -0.1, 0.0]),
+        "mu": 0.15,
         "mixture_threshold_b3_a_only_retry_selected": True,
     }
 
@@ -484,6 +661,40 @@ def test_final_species_config_preserves_selected_a_only_threshold_retry() -> Non
 
     assert species_cfg.b3_tail_model == "a_only"
     assert species_cfg.v_full_init is not None
+
+
+def test_final_species_config_preserves_selected_threshold_refinement() -> None:
+    """The post-root full+external solve must retain the resolved shallow pole."""
+    cfg = MixtureConfig(
+        species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
+        rho_g_cc=1.0, final_run_mode="full+ext", save_data=False,
+    )
+    full_result = {
+        "r": np.asarray([0.1, 1.0, 2.0]),
+        "v_full": np.asarray([-1.0, -0.1, 0.0]),
+        "mu": 0.25,
+        "mixture_threshold_refine_retry_selected": True,
+    }
+
+    species_cfg = mixmod._final_species_config(
+        cfg,
+        element_key="C",
+        r_ws_bohr=2.0,
+        n_i_bohr3=3.0 / (4.0 * np.pi * 2.0**3),
+        extra_overrides={},
+        full_result_init=full_result,
+    )
+
+    assert species_cfg.bound_zero_tail_refine is True
+    assert species_cfg.bound_zero_tail_max_binding_ha >= 1.0e-2
+    assert species_cfg.stage2_max_iter >= 300
+    assert species_cfg.scf_dn_tol <= 1.0e-6
+    assert species_cfg.scf_dv_tol <= 1.0e-6
+    assert species_cfg.stage1_max_iter == 0
+    assert species_cfg.continuation_stage2_from_init is True
+    assert species_cfg.continuation_mu_init == pytest.approx(0.25)
+    assert species_cfg.scf_mix == pytest.approx(0.15)
+    assert species_cfg.scf_mixing_w0 == pytest.approx(5.0e-4)
 
 
 def test_final_species_config_keeps_screening_tail_fit_off_by_default() -> None:
@@ -971,7 +1182,8 @@ def test_mixture_final_rerun_records_electronic_eligibility(
     monkeypatch.setattr(mixmod, "_solve_species_from_config", _fake_final)
     cfg = MixtureConfig(
         species=["H", "C"], counts=[1.0, 1.0], temperature_ev=10.0,
-        rho_g_cc=1.0, final_run_mode="full+ext", save_data=False,
+        rho_g_cc=1.0, final_run_mode="full+ext", species_parallel_jobs=1,
+        save_data=False,
     )
     result = mixmod.solve_mixture_full_then_ext(cfg)
 

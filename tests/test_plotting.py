@@ -75,8 +75,9 @@ def test_style_rcparams_resolves_profile_palette_and_size() -> None:
         palette="science",
         figsize="paper_2col",
     )
-    assert params["font.size"] == 8.0
-    assert params["axes.labelsize"] == 9.0
+    assert params["font.size"] == 9.0
+    assert params["axes.labelsize"] == 10.0
+    assert params["legend.fontsize"] == 9.0
     assert params["figure.figsize"] == FIGURE_SIZES["paper_2col"]
     assert params["axes.prop_cycle"].by_key()["color"] == list(
         PALETTES["science"]
@@ -90,10 +91,10 @@ def test_style_rcparams_resolves_profile_palette_and_size() -> None:
 
 def test_thesis_profile_matches_gallery_typography() -> None:
     params = style_rcparams(profile="thesis", palette="bing")
-    assert params["font.size"] == 11.0
-    assert params["axes.labelsize"] == 13.0
-    assert params["axes.titlesize"] == 13.0
-    assert params["legend.fontsize"] == 10.0
+    assert params["font.size"] == 14.0
+    assert params["axes.labelsize"] == 16.0
+    assert params["axes.titlesize"] == 16.0
+    assert params["legend.fontsize"] == 13.0
     assert params["lines.linewidth"] == 1.8
     assert params["axes.prop_cycle"].by_key()["color"] == list(
         PALETTES["bing"]
@@ -123,7 +124,7 @@ def test_style_context_restores_previous_rcparams() -> None:
     with matplotlib.rc_context({"font.size": 23.0}):
         assert matplotlib.rcParams["font.size"] == 23.0
         with style_context("paper", palette="nature", figsize="paper_1col"):
-            assert matplotlib.rcParams["font.size"] == 8.0
+            assert matplotlib.rcParams["font.size"] == 9.0
             assert tuple(matplotlib.rcParams["figure.figsize"]) == (3.54, 2.76)
         assert matplotlib.rcParams["font.size"] == 23.0
 
@@ -131,7 +132,7 @@ def test_style_context_restores_previous_rcparams() -> None:
 def test_set_style_updates_current_context() -> None:
     with matplotlib.rc_context():
         set_style("docs", palette="deep_science", figsize=(6.0, 4.0))
-        assert matplotlib.rcParams["font.size"] == 10.0
+        assert matplotlib.rcParams["font.size"] == 12.0
         assert tuple(matplotlib.rcParams["figure.figsize"]) == (6.0, 4.0)
         assert matplotlib.rcParams["axes.prop_cycle"].by_key()["color"] == list(
             PALETTES["deep_science"]
@@ -139,7 +140,13 @@ def test_set_style_updates_current_context() -> None:
 
 
 def test_grid_figsize() -> None:
-    assert grid_figsize(3, 2) == pytest.approx((7.2, 8.4))
+    assert grid_figsize(1, 1) == pytest.approx((6.6, 4.2))
+    assert grid_figsize(1, 2) == pytest.approx((10.2, 3.8))
+    assert grid_figsize(2, 2) == pytest.approx((10.2, 7.6))
+    assert grid_figsize(2, 3) == pytest.approx((12.0, 7.0))
+    assert grid_figsize(2, 5) == pytest.approx((16.0, 6.0))
+    assert grid_figsize(4, 2) == pytest.approx((10.2, 9.6))
+    assert grid_figsize(3, 3) == pytest.approx((12.0, 8.4))
     assert grid_figsize(
         2,
         4,

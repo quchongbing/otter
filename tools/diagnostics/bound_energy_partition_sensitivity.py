@@ -34,7 +34,7 @@ from otter.electronic.full_external import (
     FullExternalConfig,
     solve_full_only,
 )
-from otter.plotting import PALETTES, save_figure, style_context
+from otter.plotting import PALETTES, grid_figsize, save_figure, style_context
 
 
 # ---------------------------------------------------------------------------
@@ -70,14 +70,9 @@ def configuration(mode: str, value: float) -> FullExternalConfig:
         temperature_ev=TEMPERATURE_EV,
         rho_g_cc=RHO_G_CC,
         run_mode="full",
-        n_points=AA_N_POINTS,
         stage2_max_iter=180,
         cont_n_jobs=CONTINUUM_WORKERS,
         cont_shards=2 * CONTINUUM_WORKERS,
-        show_scf_progress=False,
-        save_data=False,
-        bound_occ_mode="fd",
-        bound_rmax_mult=None,
         bound_energy_cut_mode=mode,
         bound_energy_cut=value,
         bound_zero_tail_refine=True,
@@ -85,7 +80,6 @@ def configuration(mode: str, value: float) -> FullExternalConfig:
         bound_zero_tail_scan_points=64,
         bound_zero_tail_l_max=1,
         bound_zero_tail_edge_rel_tol=0.1,
-        b3_tail_model="full",
     )
 
 
@@ -258,7 +252,7 @@ def plot_report(states: dict[str, dict[str, np.ndarray]]) -> None:
     mask = r <= min(float(R_PLOT_MAX_BOHR), float(r[-1]))
 
     with style_context("thesis", palette="bing"):
-        fig, axes = plt.subplots(2, 2, figsize=(10.0, 7.2))
+        fig, axes = plt.subplots(2, 2, figsize=grid_figsize(2, 2))
         components = (
             ("n_bound_bohr3", r"$4\pi r^2n_{\rm bound}$"),
             ("n_free_a3_bohr3", r"$4\pi r^2n_{\rm free}^{A3}$"),
@@ -299,7 +293,11 @@ def plot_report(states: dict[str, dict[str, np.ndarray]]) -> None:
         fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
         save_figure(fig, OUTPUT_DIR / "carbon_partition_density_sensitivity")
 
-        fig_levels, (ax_all, ax_shallow) = plt.subplots(1, 2, figsize=(10.0, 4.2))
+        fig_levels, (ax_all, ax_shallow) = plt.subplots(
+            1,
+            2,
+            figsize=grid_figsize(1, 2),
+        )
         for mode_index, (label, state) in enumerate(states.items()):
             color, _ = styles[label]
             edge_ev = float(state["energy_cut_ha"]) * HARTREE_TO_EV

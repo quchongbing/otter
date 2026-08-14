@@ -33,6 +33,7 @@ import time
 from typing import Any
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
@@ -55,9 +56,7 @@ ELEMENT = "Al"
 RHO_VALUES_G_CC = (2.7, 8.1, 15.0)
 TE_EV = 10.0
 TI_EV = 10.0
-AA_N_POINTS = 1024
 CONTINUUM_WORKERS = 8
-QOZ_N_POINTS = 4096
 R_MAX_BOHR = 20.0
 K_MAX_BOHR_INV = 20.0
 HNC_TOL = 1.0e-6
@@ -107,27 +106,13 @@ def workflow_config(rho_g_cc: float) -> PlasmaWorkflowConfig:
         temperature_ev=TE_EV,
         ion_temperature_ev=TI_EV,
         rho_g_cc=float(rho_g_cc),
-        electronic_model="qm",
         aa_overrides={
-            "n_points": AA_N_POINTS,
             "cont_n_jobs": CONTINUUM_WORKERS,
             "cont_shards": 2 * CONTINUUM_WORKERS,
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -246,7 +231,7 @@ with style_context("thesis", palette="bing"):
     fig, axes = plt.subplots(
         2,
         2,
-        figsize=grid_figsize(2, 2, cell_width=4.6, cell_height=3.0),
+        figsize=grid_figsize(2, 2),
         squeeze=False,
     )
     colours = ("#2E5EAA", "#E76F51", "#23BB62")
@@ -267,12 +252,32 @@ with style_context("thesis", palette="bing"):
     for axis in axes.flat:
         axis.set_xlabel(r"$k$ [Bohr$^{-1}$]")
         axis.set_xlim(-0.05, 12.0)
-        axis.legend(frameon=False)
+
+    density_handles = [
+        Line2D(
+            [0.0],
+            [0.0],
+            color=colour,
+            label=rf"${float(state['rho_g_cc']):g}\ \mathrm{{g\,cm^{{-3}}}}$",
+        )
+        for state, colour in zip(states, colours, strict=True)
+    ]
+    component_handles = [
+        Line2D([0.0], [0.0], color="0.25", ls="-", label=r"$q(k)$"),
+        Line2D([0.0], [0.0], color="0.25", ls="--", label=r"$f(k)$"),
+    ]
+    fig.legend(
+        handles=density_handles + component_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=5,
+        frameon=False,
+    )
     fig.suptitle(
         r"Al: static Rayleigh weight, $T_e=T_i=10$ eV",
-        y=0.985,
+        y=0.99,
     )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.89))
     # Keep the figure open so Sphinx-Gallery embeds the same multi-density
     # result on the ``Al: elastic Rayleigh weight versus density`` HTML page.
     # ``save_figure`` still writes the slide-ready PNG/PDF copies; the open

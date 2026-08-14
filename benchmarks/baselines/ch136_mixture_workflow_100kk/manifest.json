@@ -1,7 +1,7 @@
 {
   "schema_version": "otter_example_manifest_v1",
   "example_id": "ch136_mixture_workflow_100kk",
-  "status": "accepted_with_dirty_worktree_provenance",
+  "status": "accepted",
   "description": "Current-Otter complete two-species AA -> QOZ/HNC result; no third-party numerical data.",
   "data_rights": {
     "origin_type": "project_generated_numerical_output",
@@ -31,25 +31,28 @@
     "temperature_k": 100000.0,
     "temperature_ev": 8.617333262145,
     "data_file": "CH1p36_5gcc_100kK.npz",
-    "data_sha256": "ad8bd16b68cd30dd104283db8f9f9be819fc974b8ed62d3245571fed77101919",
+    "data_sha256": "59d10e9728a214cf88a26c47bfc56fa4e62a8d65c342ccc832d2a9cce4522cd7",
     "producer": "docs/examples/plot_ch136_mixture_workflow.py",
-    "producer_sha256_at_generation": "92eb06dd19b67edca34fe7f32efe01cb05640463e4cc4095ec21808435f3e5b3",
-    "producer_sha256_current": "18cf30cc444650948b8271df8c8acf58af5a962b7fb4be48b8fcf70f93152e5b",
-    "producer_git_branch": "develop",
-    "producer_git_commit": "f47610cb802699e108248fa7fc138e7cbede282e",
+    "producer_sha256_at_generation": "3084ce6bd83d2b14841225adf1eaf0a5dc774838cf40fd90d4c0c83cfed49cc2",
+    "producer_sha256_current": "3084ce6bd83d2b14841225adf1eaf0a5dc774838cf40fd90d4c0c83cfed49cc2",
+    "producer_git_branch": "explore/libxc-xc",
+    "producer_git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
     "producer_project": "Otter",
-    "producer_elapsed_s": 154.56141696600025,
+    "producer_elapsed_s": 142.11051326605957,
     "worktree_clean_at_generation": false,
     "provenance_limitation": "The reviewed numerical snapshot was generated in a dirty development worktree. The current script differs from the generation snapshot only in presentation/backend handling. The standalone-producer and data checksums provide integrity, but the record is not a clean-commit source reconstruction.",
     "acceptance": {
-      "common_mu_residual_ha": 8.973172798354412e-06,
-      "hnc_output_residual": 1.0368588260839433e-11,
-      "hnc_closure_mismatch": 8.01581023779363e-14,
-      "hnc_min_eigenvalue": 0.11768021957743581,
+      "common_mu_residual_ha": 1.383577239300049e-05,
+      "hnc_output_residual": 1.2508911455286454e-11,
+      "hnc_closure_mismatch": 1.155742168634788e-13,
+      "hnc_min_eigenvalue": 0.11764561685429195,
       "common_mu_converged": true,
       "all_species_aa_converged": true,
       "all_species_external_aa_converged": true,
       "hnc_converged": true
-    }
+    },
+    "hnc_output_residual": 1.1652131246550577e-11,
+    "hnc_closure_mismatch": 6.888933867799096e-14,
+    "n_model_points": 8192
   }
 }

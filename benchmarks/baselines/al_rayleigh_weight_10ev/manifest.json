@@ -1,7 +1,7 @@
 {
   "schema_version": "otter_benchmark_manifest_v1",
   "benchmark_id": "al_rayleigh_weight_10ev",
-  "status": "accepted_project_generated",
+  "status": "accepted",
   "title": "Al static Rayleigh weight at 10 eV for three densities",
   "method_references": [
     {
@@ -22,7 +22,11 @@
   },
   "configuration": {
     "element": "Al",
-    "rho_g_cc": [2.7, 8.1, 15.0],
+    "rho_g_cc": [
+      2.7,
+      8.1,
+      15.0
+    ],
     "te_ev": 10.0,
     "ti_ev": 10.0,
     "electronic_model": "qm",
@@ -35,11 +39,12 @@
   "producer": {
     "project": "Otter",
     "script_relative_path": "docs/examples/plot_al_rayleigh_weight.py",
-    "script_sha256_current": "4eec324ab736668b658c6513bbe92d09c111cbc8ee06d96981ffbbef630fcb12",
-    "note": "All three states were freshly calculated by the standalone Otter example."
+    "script_sha256_current": "4041d47f02d27053abe8eef2e3eb1974bf1371dceb33242fde1e3d48d9d5b215",
+    "note": "All three states were freshly calculated by the standalone Otter example.",
+    "script_sha256_at_generation": "4041d47f02d27053abe8eef2e3eb1974bf1371dceb33242fde1e3d48d9d5b215"
   },
   "state": {
     "data_file": "Al_Te10eV_rayleigh.npz",
-    "data_sha256": "e7fc6cf8bc81cf131a95430f3dbd38f88e6d2584ab6f4e0bd0067fa938e8c162"
+    "data_sha256": "de5b4b36287bc6496138713bd89caa5bc256a209ee0b6bf3293109a87440a529"
   }
 }

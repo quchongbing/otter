@@ -50,8 +50,6 @@ MODEL_DISPLAY_LABELS = ("KS-DFT", "Thomas--Fermi")
 STRUCTURES = ("is", "sc")
 MAX_MODEL_WORKERS = 2
 CONTINUUM_WORKERS = 8
-AA_N_POINTS = 1024
-QOZ_N_POINTS = 1024
 HNC_TOL = 1.0e-4
 HNC_CLOSURE_TOL = 2.5e-3
 R_RETAIN_MAX_BOHR = 20.0
@@ -129,25 +127,11 @@ def configuration(model: str) -> PlasmaWorkflowConfig:
         rho_g_cc=RHO_G_CC,
         electronic_model=model_key,
         aa_overrides={
-            "n_points": AA_N_POINTS,
             "cont_n_jobs": CONTINUUM_WORKERS,
             "cont_shards": 2 * CONTINUUM_WORKERS,
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=500,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -302,7 +286,7 @@ def _payload(by_model: dict[str, dict[str, Any]]) -> dict[str, np.ndarray]:
         "electronic_models": list(MODELS),
         "structure_models": ["IS", "SC (experimental)"],
         "aa": {
-            "n_points": AA_N_POINTS,
+            "n_points": 4096,
             "bound_occ_mode": "fd",
             "bound_rmax_mult": None,
             "bound_zero_tail_refine": False,
@@ -310,7 +294,7 @@ def _payload(by_model: dict[str, dict[str, Any]]) -> dict[str, np.ndarray]:
             "continuum_workers": CONTINUUM_WORKERS,
         },
         "qoz": {
-            "n_points": QOZ_N_POINTS,
+            "n_points": 4096,
             "zbar_mode": "pseudoatom_partition",
             "renormalize_nscr_to_zbar": True,
             "chi0_model": "lindhard_fd",

@@ -3,18 +3,18 @@
   "benchmark_id": "al_qm_tf",
   "status": "accepted",
   "metrics_file": "metrics.csv",
-  "metrics_sha256": "c21097c4f1991d9512eb29c5da2da16a9bf4f896755cc79eddc5240cdf6555f3",
+  "metrics_sha256": "39477cd49824262a14cd6f920f353c19d86296416c6fcea4fce003996b3d8685",
   "title": "Aluminium KS-DFT versus finite-temperature Thomas--Fermi at 8.1 g cm^-3",
   "producer": {
     "project": "Otter",
-    "git_commit": "4e3cfb2a21fe7e6784e0aa1adaef0fcb2ab41206",
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
     "script_relative_path": "benchmarks/runners/regenerate_al_qm_tf.py",
-    "script_sha256": "4084ac63e88efb2524b31d92c59ba7b336982fd46f8f33b78941de14957356b4",
-    "script_sha256_at_generation": "4084ac63e88efb2524b31d92c59ba7b336982fd46f8f33b78941de14957356b4",
-    "script_sha256_current": "5cb283c73e31a10186e21b59da47404b7f1644b3e1a41bfe35a033f33a0e148d",
-    "worktree_clean_at_generation": true,
-    "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "note": "The commit identifies HEAD only. If worktree_clean_at_generation is false, the script checksum and status hash document that uncommitted source was involved; the commit alone is not a reproducible producer snapshot."
+    "script_sha256": "c9edee9affe2b880f6d4569709c6d14b3239858c770e2eb88fe82876e1b652bc",
+    "worktree_clean_at_generation": false,
+    "git_status_porcelain_sha256": "ca0438c8f2a0407b93a215de64594936a5431472b3b90183dabd28f852dc6d2c",
+    "note": "The commit identifies HEAD only. If worktree_clean_at_generation is false, the script checksum and status hash document that uncommitted source was involved; the commit alone is not a reproducible producer snapshot.",
+    "script_sha256_current": "c9edee9affe2b880f6d4569709c6d14b3239858c770e2eb88fe82876e1b652bc",
+    "script_sha256_at_generation": "c9edee9affe2b880f6d4569709c6d14b3239858c770e2eb88fe82876e1b652bc"
   },
   "configuration": {
     "rho_g_cc": 8.1,
@@ -29,7 +29,7 @@
       "tf"
     ],
     "structure_model": "IS",
-    "aa_n_points": 1024,
+    "aa_n_points": 4096,
     "bound_occ_mode": "fd",
     "bound_rmax_mult": null,
     "bound_zero_tail_refine": false,
@@ -72,25 +72,25 @@
       "rho_g_cc": 8.1,
       "temperature_ev": 1.0,
       "data_file": "Al_rho8p1gcc_T1eV_qm_tf.npz",
-      "data_sha256": "88570c698baee1207f789af14aac55a5595af32f58aa6ea0718dce19cd5e9ac9"
+      "data_sha256": "c75a09ff81c9546f855ba25c5f249efc4a861316e1d1739906bf0ed931e87bf0"
     },
     {
       "rho_g_cc": 8.1,
       "temperature_ev": 15.0,
       "data_file": "Al_rho8p1gcc_T15eV_qm_tf.npz",
-      "data_sha256": "782838511b9c0426c541253edc20ec918c721bf152bf07a69fd55e5bc34cd2ee"
+      "data_sha256": "3dd4bd1d55343a744cd838ec620124d957764c93f4f6d8d9bda1a4e23f6e1470"
     },
     {
       "rho_g_cc": 8.1,
       "temperature_ev": 50.0,
       "data_file": "Al_rho8p1gcc_T50eV_qm_tf.npz",
-      "data_sha256": "e21e1cdd0d6003bf523be38fbd71d961f6823db08d62f87c810dccda0a46c5a4"
+      "data_sha256": "b3a64921b8eb2a63588076ef5d88768b5dc0f4a0587a939d3eb89aca0437c86f"
     },
     {
       "rho_g_cc": 8.1,
       "temperature_ev": 100.0,
       "data_file": "Al_rho8p1gcc_T100eV_qm_tf.npz",
-      "data_sha256": "566496c82c0180d704a944c6da4872644126edff33ec8567fa5f750770585a68"
+      "data_sha256": "645a89d358ab3ff22906f310d23d587425e2e28b0bddeec94f2cb28ec5427145"
     }
   ]
 }

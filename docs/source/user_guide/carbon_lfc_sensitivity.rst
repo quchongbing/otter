@@ -53,7 +53,20 @@ decomposition
 
    V_{ii}=V_{\rm charge}+V_{\rm LFC}+V_{\chi_0}
 
-and verifies that its sum reproduces the potential used by QOZ/HNC.
+where, with :math:`d(k)=q(k)-\bar Z`,
+
+.. math::
+
+   V_{\rm charge} &= \frac{4\pi}{k^2}
+      \left[-2\bar Z d(k)-d(k)^2\right],\\
+   V_{\rm LFC} &= \frac{4\pi}{k^2}G_{ee}(k)q(k)^2,\\
+   V_{\chi_0} &= \frac{q(k)^2}{\chi^0_{ee}(k)}.
+
+All branches share :math:`V_{\rm charge}+V_{\chi_0}` because the average
+atom, :math:`q(k)`, and :math:`\chi^0_{ee}(k)` are held fixed.  This sum is
+used only to verify the decomposition and is not plotted as a model curve.
+Only :math:`V_{\rm LFC}` changes; the complete three-term sum is passed to
+QOZ/HNC.
 
 Run the example
 ---------------
@@ -72,9 +85,7 @@ new files under
 ``benchmarks/outputs/carbon_lfc_sensitivity/gallery_recomputed``.  Existing
 accepted results are not overwritten.
 
-The archived states use ordinary Fermi--Dirac bound occupations, a 4096-point
-AA grid, a full Appendix-B tail, finite-temperature Lindhard response, and
-strict electronic/HNC convergence checks.  The NPZ files are pickle-free and
-retain arrays through :math:`r,k\leq20` in Bohr units; the manifest under
-``benchmarks/baselines/carbon_lfc_sensitivity`` records the complete settings
+The pickle-free NPZ files retain arrays through :math:`r,k\leq20` in Bohr
+units.  The manifest under
+``benchmarks/baselines/carbon_lfc_sensitivity`` records the resolved settings
 and checksums.

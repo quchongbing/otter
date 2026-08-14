@@ -89,6 +89,13 @@ def test_qoz_multicomponent_synthetic_pipeline() -> None:
     assert np.allclose(qoz.vij_k, np.swapaxes(qoz.vij_k, 0, 1), atol=1e-10, rtol=1e-10)
     assert np.all(np.isfinite(qoz.vij_r))
     assert np.all(np.isfinite(qoz.vij_k))
+    assert qoz.v_ie_k.shape == (3, k.size)
+    assert qoz.v_ee_k.shape == k.shape
+    assert qoz.c_ie_k.shape == (3, k.size)
+    assert qoz.c_ee_k.shape == k.shape
+    np.testing.assert_allclose(qoz.c_ie_k, -qoz.v_ie_k / te_ha)
+    np.testing.assert_allclose(qoz.c_ee_k, -qoz.v_ee_k / te_ha)
+    np.testing.assert_allclose(qoz.v_ie_k, qoz.n_scr_k / qoz.chi_ee_k)
 
     multi_single = build_effective_vij_from_nscr(
         r=transform.r,
@@ -126,6 +133,10 @@ def test_qoz_multicomponent_synthetic_pipeline() -> None:
     )
     assert np.allclose(multi_single.vij_k[0, 0], single.vii_k, atol=1e-10, rtol=1e-10)
     assert np.allclose(multi_single.vij_r[0, 0], single.vii_r, atol=1e-10, rtol=1e-10)
+    np.testing.assert_allclose(multi_single.v_ie_k[0], single.v_ie_k)
+    np.testing.assert_allclose(multi_single.v_ee_k, single.v_ee_k)
+    np.testing.assert_allclose(multi_single.c_ie_k[0], single.c_ie_k)
+    np.testing.assert_allclose(multi_single.c_ee_k, single.c_ee_k)
 
     # Use a deliberately weak pair potential for the HNC smoke test. The
     # multicomponent HNC solver is exercised independently of the stronger

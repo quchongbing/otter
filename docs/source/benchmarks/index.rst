@@ -15,18 +15,15 @@ script runs: a high-resolution PNG for the web and a vector PDF for papers or
 slides.  The PDF paths are printed by each script and live under the
 corresponding ``benchmarks/outputs/<benchmark>/figures`` directory.
 
-Definition-aware ionization context
------------------------------------
+Carbon mean ionization
+----------------------
 
-The carbon ionization example is the main visual entry point for this
-definition-aware comparison.  It shows Otter's :math:`\bar Z` and :math:`Z^*`
-alongside the model-dependent :math:`Z^{\rm free}` curves from Figure 3(a) of
-:cite:t:`BethkenhagenEtAl2020`, and provides a second figure with the tracked
-orbital levels.  Because these quantities use different electron partitions,
-the comparison is intended to show definitions and trends, not to assign a
-misleading pointwise error.  The runnable example is shown here; the
-publication-data audit remains available in the dedicated
-Bethkenhagen benchmark page.
+Otter's :math:`\bar Z` and :math:`Z^*` are plotted with the model-dependent
+:math:`Z^{\rm free}` curves from Figure 3(a) of
+:cite:t:`BethkenhagenEtAl2020`.  These quantities use different electron
+partitions, so only their density dependence is compared.  The second figure
+tracks the carbon orbital energies.  Provenance for the digitized literature
+curves is given on the dedicated Bethkenhagen benchmark page.
 
 .. raw:: html
 
@@ -36,7 +33,7 @@ Bethkenhagen benchmark page.
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="Carbon ionization, pressure-ionization levels, and definition-aware comparison with Bethkenhagen et al. (2020).">
+    <div class="sphx-glr-thumbcontainer" tooltip="Carbon mean ionization and pressure-ionization levels, with literature curves from Bethkenhagen et al. (2020).">
 
 .. only:: html
 

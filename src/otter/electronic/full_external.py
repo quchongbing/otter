@@ -28,6 +28,7 @@ from otter.electronic.ks_dft import (
     KSDTFConfig,
     _apply_charge_constrained_b3_tail,
     _apply_external_energy_floor,
+    _bound_orbital_density_tables,
     _continuum_prefix_length,
     _electron_count,
     _enforce_source_charge_closure,
@@ -1069,14 +1070,9 @@ class FullExternalConfig(CitationMixin):
     #   False     -> use the matched B3 density directly
     ext_b3_use_source_closure: bool | None = None
     # External-branch source-closure policy when ext B3 is active:
-    #   None/auto -> enable only after the rebuilt ext tail is already close
-    #                enough to n0 near the trusted radius
+    #   None/auto -> use the matched B3 density directly so n_ext -> n0
     #   True      -> always apply source_closure to ext B3
     #   False     -> never apply source_closure to ext B3
-    ext_source_closure_auto_rel_tol: float = 1.0e-5
-    # Relative `|n_ext-n0|/max(|n0|, eps)` threshold used by the automatic
-    # external source-closure policy.
-
     # ----- n0 closure overrides -----
     n0_mode_override: str | None = None
     # Optional override for the low-level KS `n0_mode`. When None, the current
@@ -1212,12 +1208,16 @@ class FullExternalConfig(CitationMixin):
     store_final_bound_debug: bool = False
     # If True, keep the final bound eigenpairs and ion-partition controls in
     # the in-memory result for exact post-SCF n_ion decomposition diagnostics.
+    # ``verbose`` is retained as a compatibility alias for ``debug``.
     verbose: bool = False
-    # Backward-compatible alias for show_scf_progress.
+    # Print full SCF, continuum, charge, tail, and timing diagnostics.
+    debug: bool = False
+    # Log stride for SCF iteration output.
     print_every: int = 1
-    # Log stride when verbose=True.
+    # Print the compact SCF trace (d_n and d_v).
     show_scf_progress: bool = False
-    # If True, print per-iteration SCF progress (full and external loops).
+    # Print input and final-state summaries without enabling the SCF trace.
+    show_summary: bool = False
 
     # ----- Output controls -----
     save_data: bool = False
@@ -1508,8 +1508,6 @@ class FullExternalConfig(CitationMixin):
                     "b3_charge_constraint_profile_delta_rel_max must be finite "
                     "and positive when set."
                 )
-        if float(self.ext_source_closure_auto_rel_tol) < 0.0:
-            raise ValueError("ext_source_closure_auto_rel_tol must be non-negative.")
 
     def _use_manual_bound_basis(self) -> bool:
         """
@@ -2123,7 +2121,6 @@ def _build_continuum_params(
             else float(cfg.b3_charge_constraint_profile_delta_rel_max)
         ),
         "ext_source_closure_when_b3": cfg.ext_b3_use_source_closure,
-        "ext_source_closure_auto_rel_tol": float(cfg.ext_source_closure_auto_rel_tol),
         "analytic_ion_sphere_background": bool(
             _uses_analytic_ion_sphere_background(cfg, r_ws=float(r_ws), rmax=float(rmax))
         ),
@@ -2175,83 +2172,27 @@ def _resolve_full_b3_source_closure_policy(
 def _resolve_ext_source_closure_policy(
     *,
     setting: bool | None,
-    r: np.ndarray,
-    n_ext_candidate: np.ndarray,
-    n0: float,
-    solve_rmax: float | None,
-    tail_r_fit_max: float | None,
-    r_trust: float,
-    blend_width: float,
-    rel_tol: float,
 ) -> tuple[bool, dict[str, Any]]:
     """
     Decide whether external source-closure should be applied on this iteration.
 
     Notes
     -----
-    The external-B3 branch previously always applied source_closure when the
-    flag was enabled. For light species with short continuum boxes this could
-    flatten `n_ext` well before the rebuilt B3 tail had naturally relaxed to
-    `n0`, which then fed directly into `V_ext`, `n_scr`, and the downstream
-    HNC kernel. In auto mode, only enable source_closure once the candidate
-    rebuilt `n_ext` is already sufficiently close to `n0` near the trusted
-    radius and has also flattened across the pre-trust tail segment. This
-    avoids switching on source_closure while the B3 tail is still visibly
-    relaxing toward `n0`.
+    B3 already constructs the physical external density with
+    ``n_ext(r) -> n0``.  A uniform outer-region charge correction changes that
+    asymptote by a small constant.  The resulting nonzero tail in
+    ``n_scr = n_full - n_ext - n_ion`` can dominate its low-k moments even
+    when the relative density correction is tiny.  Auto mode therefore keeps
+    the matched B3 density unchanged.  The legacy source correction remains
+    available only through an explicit ``True`` setting.
     """
     if setting is True:
         return True, {"mode": "forced_on"}
     if setting is False:
         return False, {"mode": "forced_off"}
-
-    r_arr = np.asarray(r, dtype=float)
-    n_arr = np.asarray(n_ext_candidate, dtype=float)
-    if r_arr.size == 0 or n_arr.size != r_arr.size:
-        return False, {"mode": "auto", "reason": "invalid_grid"}
-
-    r_trust_val = min(max(float(r_trust), float(r_arr[0])), float(r_arr[-1]))
-    r_hi = min(r_trust_val + max(float(blend_width), 0.0), float(r_arr[-1]))
-    if solve_rmax is not None:
-        r_hi = min(float(r_hi), float(solve_rmax))
-    if r_hi <= r_trust_val:
-        r_hi = min(
-            float(solve_rmax) if solve_rmax is not None else float(r_arr[-1]),
-            float(r_arr[-1]),
-        )
-
-    mask = (r_arr >= r_trust_val) & (r_arr <= r_hi)
-    if not np.any(mask):
-        return False, {"mode": "auto", "reason": "empty_probe_window"}
-
-    scale = max(abs(float(n0)), 1.0e-12)
-    rel_dev = float(np.max(np.abs(n_arr[mask] - float(n0))) / scale)
-    pre_lo = r_arr[0] if tail_r_fit_max is None else float(tail_r_fit_max)
-    pre_lo = min(max(float(pre_lo), float(r_arr[0])), float(r_trust_val))
-    pre_mask = (r_arr >= pre_lo) & (r_arr <= r_trust_val)
-    if int(np.count_nonzero(pre_mask)) < 2:
-        pre_mask = mask
-
-    pre_vals = n_arr[pre_mask]
-    pre_rel_dev = float(np.max(np.abs(pre_vals - float(n0))) / scale)
-    pre_rel_span = float((np.max(pre_vals) - np.min(pre_vals)) / scale)
-    pre_rel_trend = float(abs(float(pre_vals[-1]) - float(pre_vals[0])) / scale)
-    tol = max(float(rel_tol), 0.0)
-    apply = bool(
-        rel_dev <= tol
-        and pre_rel_dev <= tol
-        and pre_rel_span <= tol
-    )
-    return apply, {
+    return False, {
         "mode": "auto",
-        "rel_dev_max": float(rel_dev),
-        "pretrust_rel_dev_max": float(pre_rel_dev),
-        "pretrust_rel_span": float(pre_rel_span),
-        "pretrust_rel_trend": float(pre_rel_trend),
-        "rel_tol": float(rel_tol),
-        "pretrust_r_lo": float(r_arr[pre_mask][0]),
-        "pretrust_r_hi": float(r_arr[pre_mask][-1]),
-        "probe_r_lo": float(r_trust_val),
-        "probe_r_hi": float(r_hi),
+        "reason": "preserve_matched_external_density_tail",
     }
 
 
@@ -2446,7 +2387,8 @@ def _build_ks_config(
         exact_ws_boundary_quadrature=bool(
             _uses_decoupled_ion_sphere_grid(cfg, r_ws=float(r_ws), rmax=float(rmax))
         ),
-        verbose=bool(cfg.show_scf_progress or cfg.verbose),
+        verbose=bool(cfg.show_scf_progress or cfg.debug or cfg.verbose),
+        debug=bool(cfg.debug or cfg.verbose),
         print_every=int(cfg.print_every),
         perf_diag=bool(cfg.perf_diag),
         perf_print_every=1,
@@ -2531,6 +2473,13 @@ def _build_bound_tables_and_dos(
     gamma: float,
     n_jobs: int,
     zero_tail_bound_meta: dict[str, Any] | None = None,
+    eigvals: np.ndarray | None = None,
+    eigvecs: np.ndarray | None = None,
+    bound_occ_mode: str = "fd",
+    ion_cutoff: np.ndarray | None = None,
+    r_target: np.ndarray | None = None,
+    r_ws: float | None = None,
+    ws_weight_min: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """
     Build bound-level tables and DOS arrays for saving/inspection.
@@ -2552,16 +2501,21 @@ def _build_bound_tables_and_dos(
 
     n_states_arr = None if np.isscalar(n_states) else np.asarray(n_states, dtype=int)
     n_states_max = int(np.max(n_states_arr)) if n_states_arr is not None and n_states_arr.size else int(n_states)
-    dxi = float(np.sqrt(r[1]) - np.sqrt(r[0]))
-    vals, _ = solve_bound_states_sparse_numerov(
-        v_full,
-        r,
-        dxi,
-        l_arr,
-        n_states=n_states,
-        boundary="dirichlet",
-        n_jobs=max(int(n_jobs), 1),
-    )
+    vectors: np.ndarray | None
+    if eigvals is None or eigvecs is None:
+        dxi = float(np.sqrt(r[1]) - np.sqrt(r[0]))
+        vals, vectors = solve_bound_states_sparse_numerov(
+            v_full,
+            r,
+            dxi,
+            l_arr,
+            n_states=n_states,
+            boundary="dirichlet",
+            n_jobs=max(int(n_jobs), 1),
+        )
+    else:
+        vals = np.asarray(eigvals, dtype=float)
+        vectors = np.asarray(eigvecs, dtype=float)
 
     e_mat = np.asarray(vals, dtype=float)
     # The production SCF can replace a shallow Dirichlet-box orbital by a
@@ -2632,7 +2586,7 @@ def _build_bound_tables_and_dos(
         dos_cont_fd_full[mask] = dos_cont_fd
 
     # Use [l, n] layout consistently in saved files.
-    return {
+    output = {
         "bound_l_list": l_arr.astype(float),
         "bound_n_index": np.arange(1, int(n_states_max) + 1, dtype=float),
         "bound_energy_ha": e_mat,
@@ -2647,6 +2601,30 @@ def _build_bound_tables_and_dos(
         "dos_cont_ideal": dos_cont_full,
         "dos_cont_ideal_fd": dos_cont_fd_full,
     }
+    if (
+        vectors is not None
+        and ion_cutoff is not None
+        and r_target is not None
+        and r_ws is not None
+    ):
+        bound_density, ion_density = _bound_orbital_density_tables(
+            r,
+            e_mat,
+            vectors,
+            l_arr,
+            float(mu),
+            float(temperature_ha),
+            energy_cut=float(energy_cut),
+            bound_occ_mode=str(bound_occ_mode),
+            gamma=float(gamma),
+            cutoff=np.asarray(ion_cutoff, dtype=float),
+            r_target=np.asarray(r_target, dtype=float),
+            r_ws=float(r_ws),
+            ws_weight_min=float(ws_weight_min),
+        )
+        output["bound_orbital_density_r"] = bound_density
+        output["ion_orbital_density_r"] = ion_density
+    return output
 
 
 def _build_scattering_continuum_dos(
@@ -2721,12 +2699,18 @@ def _print_state_summary(
     cont_l_cap_strategy: str = "match",
     cont_shards: int | None = None,
     cont_shard_policy: str = "egrid",
+    debug: bool = False,
 ) -> None:
-    """Print one-line and expanded run setup summary."""
+    """Print the normal AA setup summary."""
+    mode_label = {
+        "full": "full",
+        "full+ext": "full + external",
+    }.get(str(run_mode), str(run_mode))
     print(
-        f"[full_external] element={symbol} (Z={z_nuc}), Te={temperature_ev:.3f} eV, "
-        f"rho={rho_g_cc:.3f} g/cc, run_mode={run_mode}"
+        f"[AA] {symbol} (Z={z_nuc}) | Rws={r_ws:.6f} a0 | {mode_label}"
     )
+    if not debug:
+        return
     msg = (
         f"[full_external] R_ws={r_ws:.6f} Bohr, rmax_mult={rmax_mult:.3f}, "
         f"r_max={rmax:.6f} Bohr, n_points={n_points}, l_max_global={l_max}"
@@ -2748,24 +2732,106 @@ def _print_state_summary(
     print(msg)
 
 
-def _print_bound_table(title: str, matrix: np.ndarray, l_values: np.ndarray) -> None:
+_ORBITAL_LETTERS = "spdfghiklmnoqrtuvwxyz"
+
+
+def _orbital_label(l_value: int, radial_index: int) -> str:
+    """Return the spectroscopic label for one [l, radial-index] state."""
+    l_int = int(l_value)
+    letter = _ORBITAL_LETTERS[l_int] if 0 <= l_int < len(_ORBITAL_LETTERS) else f"l{l_int}"
+    principal_n = int(radial_index) + l_int + 1
+    return f"{principal_n}{letter}"
+
+
+def _bound_basis_saturation(
+    energies: np.ndarray,
+    l_values: np.ndarray,
+    n_states_by_l: np.ndarray,
+) -> dict[str, Any]:
+    """Diagnose whether the requested finite bound basis ended while still bound.
+
+    A negative last requested eigenvalue means that the corresponding radial
+    channel did not expose its continuum edge.  A negative state in the
+    highest requested angular channel similarly means that the angular scan
+    ended before demonstrating that the next channel is non-binding.  These
+    checks do not alter the spectrum; they prevent a finite basis from being
+    mistaken for a complete one.
     """
-    Pretty-print a bound-state matrix indexed by [l, n].
-    """
-    mat = np.asarray(matrix, dtype=float)
+    e_mat = np.asarray(energies, dtype=float)
     l_arr = np.asarray(l_values, dtype=int)
-    if mat.ndim != 2 or mat.shape[0] != l_arr.size:
+    caps = np.asarray(n_states_by_l, dtype=int)
+    if (
+        e_mat.ndim != 2
+        or e_mat.shape[0] != l_arr.size
+        or caps.ndim != 1
+        or caps.size != l_arr.size
+    ):
+        return {
+            "saturated": False,
+            "radial_saturated_l": [],
+            "angular_saturated": False,
+        }
+
+    radial_saturated_l: list[int] = []
+    for row, (l_value, cap) in enumerate(zip(l_arr, caps)):
+        last = int(cap) - 1
+        if 0 <= last < e_mat.shape[1] and np.isfinite(e_mat[row, last]) and e_mat[row, last] < 0.0:
+            radial_saturated_l.append(int(l_value))
+    angular_saturated = bool(
+        l_arr.size
+        and np.any(np.isfinite(e_mat[-1]) & (e_mat[-1] < 0.0))
+    )
+    return {
+        "saturated": bool(radial_saturated_l or angular_saturated),
+        "radial_saturated_l": radial_saturated_l,
+        "angular_saturated": angular_saturated,
+    }
+
+
+def _print_bound_levels(
+    energies: np.ndarray,
+    occupations: np.ndarray,
+    l_values: np.ndarray,
+    *,
+    energy_cut: float,
+) -> None:
+    """Print physical spectroscopic labels, energies, and FD occupations."""
+    e_mat = np.asarray(energies, dtype=float)
+    fd_mat = np.asarray(occupations, dtype=float)
+    l_arr = np.asarray(l_values, dtype=int)
+    if (
+        e_mat.ndim != 2
+        or fd_mat.shape != e_mat.shape
+        or e_mat.shape[0] != l_arr.size
+    ):
         return
-    n_states = mat.shape[1]
-    col_labels = [f"n={i+1}" for i in range(n_states)]
-    head = "     | " + " | ".join([f"{c:>10s}" for c in col_labels])
-    sep = "-----+" + "+".join(["-" * 12 for _ in col_labels])
-    print(f"\n{title}")
-    print(head)
-    print(sep)
-    for i, l_val in enumerate(l_arr):
-        row = " | ".join([f"{mat[i, j]:10.4f}" for j in range(n_states)])
-        print(f" l={int(l_val):<2d}| {row}")
+
+    rows: list[tuple[int, int, str, float, float]] = []
+    for l_row, l_value in enumerate(l_arr):
+        for radial_index in range(e_mat.shape[1]):
+            energy = float(e_mat[l_row, radial_index])
+            if not np.isfinite(energy) or energy >= float(energy_cut):
+                continue
+            principal_n = radial_index + int(l_value) + 1
+            rows.append(
+                (
+                    principal_n,
+                    int(l_value),
+                    _orbital_label(int(l_value), radial_index),
+                    energy,
+                    float(fd_mat[l_row, radial_index]),
+                )
+            )
+    rows.sort(key=lambda item: (item[0], item[1]))
+
+    print("\nBound levels")
+    if not rows:
+        print("  none")
+        return
+    print("  level |     E [Ha] |      f_FD")
+    print("  ------+------------+----------")
+    for _, _, label, energy, occupation in rows:
+        print(f"  {label:>5s} | {energy:10.5f} | {occupation:9.5f}")
 
 
 def _external_fixed_mu_scf(
@@ -2786,6 +2852,7 @@ def _external_fixed_mu_scf(
     ext_b3_tail_mode: str,
     verbose: bool,
     print_every: int,
+    debug: bool = False,
     perf_diag: bool = False,
     perf_show_stage: bool = True,
     ph_kappa: float = 0.0,
@@ -3031,15 +3098,9 @@ def _external_fixed_mu_scf(
             )
             if b3_tail_active_this_iter:
                 use_source_closure, source_closure_meta = _resolve_ext_source_closure_policy(
-                    setting=params_iter.get("ext_source_closure_when_b3", None),
-                    r=r,
-                    n_ext_candidate=n_ext_new,
-                    n0=float(n0),
-                    solve_rmax=params_iter.get("solve_rmax", None),
-                    tail_r_fit_max=params_iter.get("tail_r_fit_max", None),
-                    r_trust=float(r_trust),
-                    blend_width=float(blend_w),
-                    rel_tol=float(params_iter.get("ext_source_closure_auto_rel_tol", 1.0e-5)),
+                    # ``_split_continuum_params_for_full_ext`` removes the
+                    # ``ext_`` namespace when it builds ``ext_params``.
+                    setting=params_iter.get("source_closure_when_b3", None),
                 )
                 use_source_closure = bool(use_source_closure and use_source_closure_base)
             elif not use_source_closure:
@@ -3164,14 +3225,17 @@ def _external_fixed_mu_scf(
             perf["total"] = time.perf_counter() - t_iter
 
         if verbose and (it % max(int(print_every), 1) == 0):
-            print(
-                f"  [ext] it={it:2d}  dn_rel={dn_rel:.3e}  dv_rel={dv_rel:.3e}  "
-                f"err={err:.3e}  mix={current_mix:.3f}  scheme={scheme}  "
-                f"kappa={kappa_eff:.3e} Bohr^-1  "
-                f"cont_e_max={float(ext_params.get('e_max', np.nan)):.6f} Ha"
-            )
+            if not debug:
+                print(f"  {it:4d} | {dn_rel:9.3e} | {dv_rel:9.3e}")
+            else:
+                print(
+                    f"  [ext] it={it:2d}  dn_rel={dn_rel:.3e}  dv_rel={dv_rel:.3e}  "
+                    f"err={err:.3e}  mix={current_mix:.3f}  scheme={scheme}  "
+                    f"kappa={kappa_eff:.3e} Bohr^-1  "
+                    f"cont_e_max={float(ext_params.get('e_max', np.nan)):.6f} Ha"
+                )
             tail_model_req = str(tail_meta_ext.get("model_requested", "")).strip().lower()
-            if tail_model_req == "auto":
+            if debug and tail_model_req == "auto":
                 tail_model_sel = str(tail_meta_ext.get("model_selected", "n/a"))
                 fit_rel_improve = tail_meta_ext.get("fit_rel_improve_full", np.nan)
                 fit_signal_max = tail_meta_ext.get("fit_signal_max", np.nan)
@@ -3183,7 +3247,7 @@ def _external_fixed_mu_scf(
                     f"signal={float(fit_signal_max):.3e}, "
                     f"threshold={float(fit_signal_threshold):.3e}"
                 )
-            if perf_diag and perf_show_stage:
+            if debug and perf_diag and perf_show_stage:
                 perf_line = ", ".join(
                     f"{key}={perf[key]:.3f}"
                     for key in ("continuum", "closure", "potential", "mix", "metrics", "total")
@@ -3231,6 +3295,9 @@ def _external_fixed_mu_scf(
             ),
             "ext_source_closure_mode": str(source_closure_meta.get("mode", "")),
             "ext_source_closure_applied": bool(source_closure_meta.get("applied", use_source_closure_base)),
+            "ext_source_closure_delta_n": float(
+                source_closure_meta.get("charge_closure_delta_n", 0.0)
+            ),
             "ext_source_closure_rel_dev_max": float(source_closure_meta.get("rel_dev_max", np.nan)),
             "ext_source_closure_pretrust_rel_dev_max": float(
                 source_closure_meta.get("pretrust_rel_dev_max", np.nan)
@@ -3310,6 +3377,10 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         - metadata ("meta"),
         - optional save paths ("saved_paths") when cfg.save_data=True.
     """
+    started = time.perf_counter()
+    scf_report = bool(cfg.show_scf_progress or cfg.debug or cfg.verbose)
+    report = bool(cfg.show_summary or scf_report)
+    debug = bool(cfg.debug or cfg.verbose)
     if str(cfg.electronic_model).strip().lower() == "tf":
         # Import lazily so the mature orbital path keeps its historical import
         # graph and startup behavior.  The TF result implements the same
@@ -3348,6 +3419,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
                 ion_cut_c=float(cfg.ion_cut_c),
                 quadrature_order=int(cfg.tf_quadrature_order),
                 show_progress=bool(cfg.show_scf_progress),
+                debug=debug,
                 verbose=bool(cfg.verbose),
                 v_full_init=cfg.v_full_init,
                 v_full_init_r=cfg.v_full_init_r,
@@ -3406,7 +3478,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     l_max = min(int(np.ceil(k_max * rmax + 2.0)), 150)
     cont_solve_rmax = float(geometry["solve_rmax"]) if geometry["solve_rmax"] is not None else float(rmax)
     cont_l_max_ceiling = min(int(np.ceil(k_max * cont_solve_rmax + 2.0)), 150)
-    if cfg.show_scf_progress or cfg.verbose:
+    if report:
         _print_state_summary(
             symbol=symbol,
             z_nuc=z_nuc,
@@ -3428,6 +3500,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             cont_l_cap_strategy=str(cfg.cont_l_cap_strategy),
             cont_shards=cfg.cont_shards,
             cont_shard_policy=str(cfg.cont_shard_policy),
+            debug=debug,
         )
 
     cont_stage1 = _build_continuum_params(
@@ -3453,10 +3526,12 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         *,
         cont_params_stage1: dict[str, Any],
     ) -> dict[str, Any]:
-        if cfg.show_scf_progress or cfg.verbose:
+        if scf_report:
             e_max_mode = str(cont_params_stage1.get("e_max_mode", "fixed"))
-            msg = f"[full_external] stage1: e_max_mode={e_max_mode}"
-            if e_max_mode == "fixed":
+            msg = "[AA/full SCF: stage 1]"
+            if debug:
+                msg += f" e_max_mode={e_max_mode}"
+            if debug and e_max_mode == "fixed":
                 try:
                     msg += f", e_max={float(cont_params_stage1['e_max']):.6f} Ha"
                 except Exception:
@@ -3491,8 +3566,8 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     use_stage2_continuation_init = bool(cfg.continuation_stage2_from_init) and v_full_init is not None
     skip_stage1 = bool(use_stage2_continuation_init and int(cfg.stage1_max_iter) <= 0)
     if skip_stage1:
-        if cfg.show_scf_progress or cfg.verbose:
-            print("[full_external] stage1: skipped; using continuation V_eff directly for stage2")
+        if scf_report:
+            print("[AA/full SCF: stage 1] skipped; using the continuation potential")
         stage1 = {
             "history": [],
             "mu": (
@@ -3545,19 +3620,21 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         cont_params_stage2: dict[str, Any],
     ) -> dict[str, Any]:
         stage2_mixer_scheme, stage2_mixer_m, stage2_mixer_mix = _stage2_mixer_values()
-        if cfg.show_scf_progress or cfg.verbose:
+        if scf_report:
             e_max_mode = str(cont_params_stage2.get("e_max_mode", "fixed"))
-            msg = (
-                "[full_external] stage2: "
-                f"mu_bounds=({float(mu_bounds_stage2[0]):.6f}, {float(mu_bounds_stage2[1]):.6f}) Ha, "
-                f"e_max_mode={e_max_mode}"
-            )
-            if e_max_mode == "fixed":
+            msg = "[AA/full SCF: stage 2]"
+            if debug:
+                msg += (
+                    f" mu_bounds=({float(mu_bounds_stage2[0]):.6f}, "
+                    f"{float(mu_bounds_stage2[1]):.6f}) Ha, "
+                    f"e_max_mode={e_max_mode}"
+                )
+            if debug and e_max_mode == "fixed":
                 try:
                     msg += f", e_max={float(cont_params_stage2['e_max']):.6f} Ha"
                 except Exception:
                     pass
-            if use_stage2_continuation_init:
+            if debug and use_stage2_continuation_init:
                 msg += (
                     f", continuation_mixer={stage2_mixer_scheme}, "
                     f"m={int(stage2_mixer_m)}, mix={float(stage2_mixer_mix):.3f}"
@@ -3614,7 +3691,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     result["perf_summary_full"] = dict(result["perf_summary_stage2"])
     result["workflow"] = "full_then_ext"
 
-    if cfg.perf_diag and (cfg.show_scf_progress or cfg.verbose):
+    if cfg.perf_diag and debug:
         for stage_label, summary in (
             ("stage1", result["perf_summary_stage1"]),
             ("stage2", result["perf_summary_stage2"]),
@@ -3671,6 +3748,10 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         )
         _, ext_params = _split_continuum_params_for_full_ext(cont_ext)
         ext_params["r_ws"] = float(full["r_ws"])
+        if scf_report:
+            print("[AA/external SCF]")
+            if not debug:
+                print("  iter |       d_n |       d_v")
         n_ext_fix, v_ext_fix, ext_status = _external_fixed_mu_scf(
             r=r_full,
             g_ii=np.asarray(full["g_ii"], dtype=float),
@@ -3687,7 +3768,8 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             mixing_m=int(cfg.ext_mixing_m),
             mixing_w0=float(cfg.ext_mixing_w0),
             ext_b3_tail_mode=str(cfg.ext_b3_tail_mode),
-            verbose=bool(cfg.show_scf_progress or cfg.verbose),
+            verbose=scf_report,
+            debug=debug,
             print_every=int(cfg.print_every),
             perf_diag=bool(cfg.perf_diag),
             perf_show_stage=bool(cfg.perf_show_stage),
@@ -3725,7 +3807,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         result["perf_summary_ext"] = {"n_iter": 0, "n_perf": 0}
         result["stage2_cont_e_max_final"] = float(cfg.cont_e_max)
 
-    if cfg.perf_diag and (cfg.show_scf_progress or cfg.verbose) and do_external:
+    if cfg.perf_diag and debug and do_external:
         summary = result.get("perf_summary_ext", {})
         mean_line = _format_perf_summary_line(summary, field="timing_s", label="mean")
         max_line = _format_perf_summary_line(summary, field="timing_s", label="max")
@@ -3780,6 +3862,25 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     )
     result["v_H"] = v_h
     result["v_xc"] = v_xc
+    result["v_nuc"] = -float(z_nuc) / r
+    n_ext = np.asarray(result.get("n_ext", np.full_like(r, n0)), dtype=float)
+    v_xc_ext = xc_potential(
+        n_ext,
+        model=cfg.xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    ) - xc_potential(
+        n0_arr,
+        model=cfg.xc_model,
+        r=r,
+        gga_core_radius_bohr=gga_core_radius,
+    )
+    result["v_xc_ext"] = np.asarray(v_xc_ext, dtype=float)
+    result["v_H_ext"] = (
+        np.asarray(result["v_ext"], dtype=float)
+        - np.asarray(v_xc_ext, dtype=float)
+        - np.asarray(result.get("v_corr_ext", 0.0), dtype=float)
+    )
     core_diagnostics = radial_core_diagnostics(
         r,
         n_potential_source,
@@ -3825,6 +3926,7 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         mode=str(cfg.bound_energy_cut_mode),
         value=float(cfg.bound_energy_cut),
     )
+    result["bound_energy_cut_ha"] = float(energy_cut)
     final_ion_gamma = _final_ion_gamma_for_reporting(result, cfg)
     r_bound_diag = np.asarray(result.get("r_bound", r), dtype=float)
     v_full_diag = np.asarray(result["v_full"], dtype=float)
@@ -3841,8 +3943,38 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         gamma=float(final_ion_gamma),
         n_jobs=int(max(cfg.bound_table_n_jobs, 1)),
         zero_tail_bound_meta=result.get("zero_tail_bound_meta", None),
+        eigvals=result.get("_bound_eigvals"),
+        eigvecs=result.get("_bound_eigvecs"),
+        bound_occ_mode=str(cfg.bound_occ_mode),
+        ion_cutoff=result.get("_bound_ion_cutoff"),
+        r_target=r,
+        r_ws=float(result["r_ws"]),
+        ws_weight_min=float(cfg.ion_ws_weight_min),
     )
     result.update(bound_diag)
+    result.pop("_bound_eigvals", None)
+    result.pop("_bound_eigvecs", None)
+    result.pop("_bound_energy_cut", None)
+    result.pop("_bound_ion_cutoff", None)
+    bound_basis_l = cfg.resolved_l_list()
+    bound_basis_caps = cfg.resolved_n_states_by_l()
+    bound_basis_diag = _bound_basis_saturation(
+        np.asarray(result.get("bound_energy_ha", np.empty((0, 0))), dtype=float),
+        bound_basis_l,
+        bound_basis_caps,
+    )
+    result["bound_basis_mode"] = (
+        "manual" if cfg._use_manual_bound_basis() else "auto"
+    )
+    result["bound_basis_l_list"] = np.asarray(bound_basis_l, dtype=int)
+    result["bound_basis_n_states_by_l"] = np.asarray(bound_basis_caps, dtype=int)
+    result["bound_basis_saturated"] = bool(bound_basis_diag["saturated"])
+    result["bound_basis_radial_saturated_l"] = np.asarray(
+        bound_basis_diag["radial_saturated_l"], dtype=int
+    )
+    result["bound_basis_angular_saturated"] = bool(
+        bound_basis_diag["angular_saturated"]
+    )
     # Source closure may deliberately use a tail-corrected density only for
     # assembling V_eff while preserving the physical/output n_full profile.
     # The final-refresh branch stores a fixed-point source candidate associated
@@ -3886,19 +4018,6 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             temperature_ha=float(temperature_ha),
         )
     )
-    if cfg.show_scf_progress or cfg.verbose:
-        l_vals = np.asarray(result.get("bound_l_list", []), dtype=int)
-        _print_bound_table(
-            "=== Bound energies (Ha) ===",
-            np.asarray(result.get("bound_energy_ha", np.empty((0, 0))), dtype=float),
-            l_vals,
-        )
-        _print_bound_table(
-            "=== Bound FD occupancy f(E_nl) ===",
-            np.asarray(result.get("bound_fd", np.empty((0, 0))), dtype=float),
-            l_vals,
-        )
-
     # Ionization-state and WS-integral diagnostics. These are useful both
     # for direct inspection and for lightweight post-processing of saved
     # NPZ files, so we compute them once here and store them explicitly.
@@ -4375,7 +4494,6 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
             if cfg.ext_b3_use_source_closure is None
             else bool(cfg.ext_b3_use_source_closure)
         ),
-        "ext_source_closure_auto_rel_tol": float(cfg.ext_source_closure_auto_rel_tol),
         "n0_mode_override": (
             None if cfg.n0_mode_override is None else str(cfg.n0_mode_override)
         ),
@@ -4519,6 +4637,28 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
         "bound_energy_cut_mode": str(cfg.bound_energy_cut_mode),
         "bound_energy_cut_value": float(cfg.bound_energy_cut),
         "bound_energy_cut_ha": float(energy_cut),
+        "bound_basis_mode": str(result.get("bound_basis_mode", "unknown")),
+        "bound_basis_l_list": [
+            int(value) for value in np.asarray(
+                result.get("bound_basis_l_list", []), dtype=int
+            )
+        ],
+        "bound_basis_n_states_by_l": [
+            int(value) for value in np.asarray(
+                result.get("bound_basis_n_states_by_l", []), dtype=int
+            )
+        ],
+        "bound_basis_saturated": bool(
+            result.get("bound_basis_saturated", False)
+        ),
+        "bound_basis_radial_saturated_l": [
+            int(value) for value in np.asarray(
+                result.get("bound_basis_radial_saturated_l", []), dtype=int
+            )
+        ],
+        "bound_basis_angular_saturated": bool(
+            result.get("bound_basis_angular_saturated", False)
+        ),
         "bound_occ_mode": str(cfg.bound_occ_mode),
         "ph_kappa": float(cfg.ph_kappa) if ph_enabled else 0.0,
         "ph_kappa_iters": int(cfg.ph_kappa_iters) if ph_enabled else 0,
@@ -4600,6 +4740,45 @@ def solve_full_then_external(cfg: FullExternalConfig) -> dict[str, Any]:
     # diagnostic-only and do not override threshold_state_status.
     meta.update(veff_asymptotic_diag)
     result["meta"] = meta
+
+    elapsed = time.perf_counter() - started
+    result["runtime_s"] = float(elapsed)
+    result["meta"]["runtime_s"] = float(elapsed)
+    if report:
+        print(
+            "[AA] "
+            f"converged={bool(result.get('converged', False))} | "
+            f"mu={float(result.get('mu', np.nan)):.8f} Ha | "
+            f"Zbar={float(result.get('zbar', np.nan)):.8f} | "
+            f"time={elapsed:.3f} s"
+        )
+        l_vals = np.asarray(result.get("bound_l_list", []), dtype=int)
+        _print_bound_levels(
+            np.asarray(result.get("bound_energy_ha", np.empty((0, 0))), dtype=float),
+            np.asarray(result.get("bound_fd", np.empty((0, 0))), dtype=float),
+            l_vals,
+            energy_cut=float(energy_cut),
+        )
+        if bool(result.get("bound_basis_saturated", False)):
+            radial = np.asarray(
+                result.get("bound_basis_radial_saturated_l", []), dtype=int
+            )
+            radial_text = ",".join(str(int(value)) for value in radial)
+            angular = bool(result.get("bound_basis_angular_saturated", False))
+            print(
+                "[AA] WARNING: bound basis is saturated"
+                f" (radial l={radial_text or 'none'}, angular={angular}); "
+                "increase bound_auto_n_pad and/or bound_auto_l_pad."
+            )
+        if debug:
+            print(
+                "[AA/debug] "
+                f"threshold={result.get('threshold_state_status', 'none')} | "
+                "representation="
+                f"{result.get('threshold_state_representation', 'none')} | "
+                "E_shallow="
+                f"{float(result.get('shallowest_bound_energy_ha', np.nan)):.8e} Ha"
+            )
 
     if cfg.save_data:
         paths = save_full_external_data(

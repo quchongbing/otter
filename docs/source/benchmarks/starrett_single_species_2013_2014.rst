@@ -21,14 +21,8 @@ both PNG and PDF.
 Accepted calculations
 ---------------------
 
-Both QM and TF pass for H at 5 and 172 eV and C at 64.64 eV. Fe at 10 eV and
-W at 10 eV have accepted TF curves. The W 10 eV TF calculation uses an
-8192-point QOZ grid; all other accepted curves use 4096 points before padding.
-
-Fe QM and W 60 eV TF remain above the independent transform-closure limit
-after a 4096-to-8192-point grid check. W 10 and 60 eV QM do not reach a
-physical HNC fixed point. These attempts and numerical reasons are retained
-in the baseline manifest, but failed iterates are not plotted.
+All twelve QM/TF calculations pass the electronic, HNC, and independent
+transform-closure gates with Otter's default 4096-point radial grid.
 
 Method
 ------

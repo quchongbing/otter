@@ -39,7 +39,6 @@ RHO_G_CC = 8.1
 MODELS = ("qm", "tf")
 MAX_STATE_WORKERS = 4
 CONTINUUM_WORKERS_PER_STATE = 4
-AA_N_POINTS = 1024
 QOZ_N_POINTS = 4096
 HNC_TOL = 1.0e-6
 HNC_CLOSURE_TOL = 1.0e-3
@@ -116,27 +115,12 @@ def _configuration(temperature_ev: float, model: str) -> PlasmaWorkflowConfig:
         rho_g_cc=float(RHO_G_CC),
         electronic_model=str(model),
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            # Starrett--Saumon (2014), Appendix B, uses one common AA
-            # domain.  Do not introduce a separate bound-only zero box.
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -353,7 +337,7 @@ def _combined_payload(
         },
         "electronic_models": list(MODELS),
         "structure_model": "IS",
-        "aa_n_points": AA_N_POINTS,
+        "aa_n_points": 4096,
         "continuum_workers_per_state": CONTINUUM_WORKERS_PER_STATE,
         "bound_occ_mode": "fd",
         "bound_rmax_mult": None,
@@ -525,7 +509,7 @@ def regenerate(*, output_dir: Path = OUTPUT_DIR) -> list[Path]:
             "temperatures_ev": list(TEMPERATURES_EV),
             "models": list(MODELS),
             "structure_model": "IS",
-            "aa_n_points": AA_N_POINTS,
+            "aa_n_points": 4096,
             "bound_occ_mode": "fd",
             "bound_rmax_mult": None,
             "bound_zero_tail_refine": False,

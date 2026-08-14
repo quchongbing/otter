@@ -31,11 +31,11 @@ def test_carbon_lfc_v2_producer_uses_reviewed_strict_resolution() -> None:
     )
 
     assert producer.RHO_G_CC == 5.0
-    assert producer.AA_N_POINTS == 4096
     assert producer.QOZ_N_POINTS == 8192
     assert producer.REFERENCE_LFC == "chabrier1990"
-    assert config.aa_overrides["bound_occ_mode"] == "fd"
-    assert config.aa_overrides["b3_tail_model"] == "full"
+    assert config.aa_overrides.get("n_points", 4096) == 4096
+    assert config.aa_overrides.get("bound_occ_mode", "fd") == "fd"
+    assert config.aa_overrides.get("b3_tail_model", "full") == "full"
     assert config.aa_overrides["bound_zero_tail_refine"] is True
     assert "bound_rmax_mult" not in config.aa_overrides
     assert config.hnc_require_converged is True

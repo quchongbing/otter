@@ -11,12 +11,13 @@ to the configured numerical edge
 \(E_{\rm cut}=V_{\rm eff}(0.70R_{\rm max})\).  These two mean-ionization
 definitions are diagnostics rather than unique observables; their distinct
 pressure-ionization behaviour is discussed by Starrett *et al.* (2019),
-Sec. 4.2.  All 72 AA states from 0.1 through 450 g/cc converged with the
+Sec. 4.2.  All 80 AA states from 0.1 through 450 g/cc converged with the
 current production `bound_occ_mode="fd"` state sum.  The archive also stores
 each displayed shell's direct contribution to \(Q_{\rm ion}(R_{\rm WS})\),
 including the Starrett--Saumon pressure-ionization and radial-cutoff weights.
-Ten additional states at 1--3 g/cc resolve the pressure-ionization interval;
-the original 62 states remain unchanged and are reused as checksummed seeds.
+Ten additional states at 1--3 g/cc resolve the pressure-ionization interval.
+Eight log-distributed states between 100 and 400 g/cc resolve the high-density
+rise in mean ionization and chemical potential.
 The 3s branch is stored through 0.60 g/cc and is absent at 0.65 g/cc; this
 brackets a numerical threshold
 interval rather than defining an exact pressure-ionization density.  The
@@ -26,8 +27,10 @@ are omitted when their numerical threshold classification is marginal or
 unresolved; these classifications are recorded in the manifest, not drawn
 as plot annotations.
 
-To reproduce the state, set `RECOMPUTE_WITH_OTTER = True` in the gallery
-script, or run:
+When the requested grid matches this archive, the gallery loads it directly.
+Adding densities to `DENSITIES_G_CC` automatically starts an incremental
+extension: accepted points are reused and only missing states are calculated.
+To force that path explicitly, set `RECOMPUTE_WITH_OTTER = True` or run:
 
 ```bash
 OTTER_RECOMPUTE_CARBON_IONIZATION=1 \

@@ -131,11 +131,11 @@ MODEL_STYLES: Mapping[str, Mapping[str, Any]] = {
 
 _PROFILES: Mapping[str, Mapping[str, float]] = {
     "thesis": {
-        "font_size": 11.0,
-        "label_size": 13.0,
-        "title_size": 13.0,
-        "tick_size": 10.0,
-        "legend_size": 10.0,
+        "font_size": 14.0,
+        "label_size": 16.0,
+        "title_size": 16.0,
+        "tick_size": 13.0,
+        "legend_size": 13.0,
         "axes_linewidth": 1.0,
         "line_width": 1.8,
         "marker_size": 5.0,
@@ -143,11 +143,11 @@ _PROFILES: Mapping[str, Mapping[str, float]] = {
         "tick_minor": 2.5,
     },
     "docs": {
-        "font_size": 10.0,
-        "label_size": 11.0,
-        "title_size": 11.0,
-        "tick_size": 9.0,
-        "legend_size": 9.0,
+        "font_size": 12.0,
+        "label_size": 14.0,
+        "title_size": 14.0,
+        "tick_size": 11.0,
+        "legend_size": 11.0,
         "axes_linewidth": 0.9,
         "line_width": 1.6,
         "marker_size": 5.5,
@@ -155,11 +155,11 @@ _PROFILES: Mapping[str, Mapping[str, float]] = {
         "tick_minor": 2.25,
     },
     "paper": {
-        "font_size": 8.0,
-        "label_size": 9.0,
-        "title_size": 9.0,
-        "tick_size": 8.0,
-        "legend_size": 7.0,
+        "font_size": 9.0,
+        "label_size": 10.0,
+        "title_size": 10.0,
+        "tick_size": 9.0,
+        "legend_size": 9.0,
         "axes_linewidth": 0.8,
         "line_width": 1.3,
         "marker_size": 4.5,
@@ -274,6 +274,8 @@ def style_rcparams(
         "patch.linewidth": 0.6,
         "legend.frameon": False,
         "legend.handlelength": 1.8,
+        "legend.handletextpad": 0.5,
+        "legend.labelspacing": 0.35,
         "figure.dpi": 110.0,
         "savefig.dpi": 300.0,
         "savefig.facecolor": "white",
@@ -319,10 +321,20 @@ def grid_figsize(
     nrows: int,
     ncols: int,
     *,
-    cell_width: float = 3.6,
-    cell_height: float = 2.8,
+    cell_width: float | None = None,
+    cell_height: float | None = None,
 ) -> tuple[float, float]:
-    """Return a consistent figure size for a rectangular panel grid."""
+    """Return the project-standard figure size for a panel grid.
+
+    Standard panel sizes depend on the grid shape.  A one-panel figure is 6.6
+    by 4.2 inches; two-column layouts use 5.1 by 3.8 inches per panel; wider
+    grids use progressively narrower panels.  Grids with three or more rows
+    use compact row heights.  Thus every public figure with the same grid
+    shape has the same canvas size.
+
+    ``cell_width`` and ``cell_height`` may override either standard dimension
+    for a diagnostic whose aspect ratio carries scientific information.
+    """
     if (
         not isinstance(nrows, int)
         or isinstance(nrows, bool)
@@ -332,9 +344,23 @@ def grid_figsize(
         or ncols <= 0
     ):
         raise ValueError("nrows and ncols must be positive integers.")
-    if cell_width <= 0.0 or cell_height <= 0.0:
+    standard_cells = {
+        1: (6.6, 4.2),
+        2: (5.1, 3.8),
+        3: (4.0, 3.5),
+        4: (3.5, 3.2),
+    }
+    standard_width, standard_height = standard_cells.get(ncols, (3.2, 3.0))
+    if nrows >= 3:
+        # Repeated rows normally share titles, labels, and legends.  Compact
+        # rows keep temperature/density scans readable on a gallery page.
+        compact_height = 2.4 if ncols <= 2 else 2.8
+        standard_height = min(standard_height, compact_height)
+    width = standard_width if cell_width is None else float(cell_width)
+    height = standard_height if cell_height is None else float(cell_height)
+    if width <= 0.0 or height <= 0.0:
         raise ValueError("Panel width and height must be positive.")
-    return float(ncols * cell_width), float(nrows * cell_height)
+    return float(ncols * width), float(nrows * height)
 
 
 def add_panel_label(

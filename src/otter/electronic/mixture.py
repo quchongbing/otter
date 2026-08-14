@@ -337,6 +337,53 @@ def _species_result_is_converged(result: dict[str, Any]) -> bool:
     return bool(eligible)
 
 
+_ROOT_THRESHOLD_RETRY_MAX_BINDING_HA = 1.0e-2
+_ROOT_THRESHOLD_RETRY_MAX_ITER = 300
+_ROOT_THRESHOLD_RETRY_CHANGE_TOL = 1.0e-6
+
+
+def _is_threshold_sensitive_failure(
+    result: dict[str, Any],
+    reasons: tuple[str, ...],
+) -> bool:
+    """Identify a failed AA point whose shallow spectrum needs refinement."""
+    if "threshold_state_unresolved" in reasons:
+        return True
+    if "stage2_unconverged" not in reasons:
+        return False
+    history = list(result.get("history", []))
+    bound_charge = np.asarray(
+        [
+            float(row.get("charge_bound", np.nan))
+            for row in history[-80:]
+            if isinstance(row, dict)
+        ],
+        dtype=float,
+    )
+    bound_charge = bound_charge[np.isfinite(bound_charge)]
+    if bound_charge.size >= 8:
+        charge_min = float(np.min(bound_charge))
+        charge_max = float(np.max(bound_charge))
+        if charge_max - charge_min >= 5.0e-2:
+            high_branch = bound_charge > 0.5 * (charge_min + charge_max)
+            branch_flips = int(np.count_nonzero(high_branch[1:] != high_branch[:-1]))
+            if (
+                branch_flips >= 4
+                and np.count_nonzero(high_branch) >= 3
+                and np.count_nonzero(~high_branch) >= 3
+            ):
+                return True
+    try:
+        energy = float(result.get("shallowest_bound_energy_ha", np.nan))
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        np.isfinite(energy)
+        and energy < 0.0
+        and abs(energy) <= 2.0 * _ROOT_THRESHOLD_RETRY_MAX_BINDING_HA
+    )
+
+
 def _record_species_results_are_converged(record: dict[str, Any]) -> bool:
     """Return True only when every species solve in a mixture point converged."""
     results = list(record.get("results", []))
@@ -1033,14 +1080,20 @@ class MixtureConfig(CitationMixin):
     #       as a numerical theta surrogate.  Such a result is never a
     #       production answer; solve_mixture_full_only must verify the final
     #       theta with the originally requested full model.
+    root_threshold_refine_retry: bool = True
+    # Retry a diagnosed shallow bound/continuum failure with physical
+    # zero-tail matching.  The retry remains a full-AA solve on the ordinary
+    # radial domain and retains the requested SCF mixer.
     allow_unconverged_root: bool = False
     cache_round_digits: int = 12
     show_progress: bool = False
     show_mu_progress: bool = False
+    debug: bool = False
+    # ``verbose`` is retained as a compatibility alias for ``debug``.
     verbose: bool = False
     final_run_mode: str = "full+ext"
     volume_weights_init: list[float] | tuple[float, ...] | None = None
-    species_parallel_jobs: int = 1
+    species_parallel_jobs: int | None = None
     species_parallel_backend: str = "process"
 
     save_data: bool = False
@@ -1056,6 +1109,8 @@ class MixtureConfig(CitationMixin):
             raise ValueError("species and counts must have the same length.")
         if len(species_list) < 2:
             raise ValueError("A mixture requires at least two species.")
+        if self.species_parallel_jobs is None:
+            self.species_parallel_jobs = len(species_list)
         if float(self.rho_g_cc) <= 0.0:
             raise ValueError("rho_g_cc must be positive.")
         if float(self.temperature_ev) < 0.0:
@@ -1161,6 +1216,7 @@ class _MixtureEvaluator:
         self._species_result_cache_hits: int = 0
         self._species_result_cache_misses: int = 0
         self._species_threshold_cold_retries: int = 0
+        self._species_threshold_refine_retries: int = 0
         self._species_threshold_b3_a_only_retries: int = 0
         self._species_threshold_b3_root_surrogates: int = 0
         if species_init_cache is not None:
@@ -1298,7 +1354,10 @@ class _MixtureEvaluator:
             "ext_scf_enabled": bool(ext_enabled),
             "r_ws_override_bohr": float(r_ws_bohr),
             "n_i_override_bohr3": float(n_i_bohr3),
-            "show_scf_progress": bool(self.cfg.show_progress),
+            # Normal mixture output reports the common-mu residual. Detailed
+            # per-species SCF traces are reserved for debug mode.
+            "show_scf_progress": bool(self.cfg.debug or self.cfg.verbose),
+            "debug": bool(self.cfg.debug or self.cfg.verbose),
             "verbose": bool(self.cfg.verbose),
         }
         kwargs.update(self.cfg.aa_overrides)
@@ -1396,6 +1455,61 @@ class _MixtureEvaluator:
             else:
                 cold_reasons = ()
 
+            # Near pressure ionization, a shallow pole can lie outside the
+            # default millihartree matching window and the SCF history can
+            # alternate between bound and continuum representations.  Retry
+            # only this diagnosed failure, on the same physical radial domain,
+            # with a wider zero-tail search.  Starting stage 2 directly from
+            # the cold potential avoids feeding it the five unconverged stage-1
+            # iterates that caused the observed branch switch.  The common-mu
+            # volume closure itself is unchanged.
+            refine_probe = cold_result if cold_result is not None else result_species
+            refine_probe_eligible, refine_probe_reasons = _species_result_eligibility(
+                dict(refine_probe)
+            )
+            refine_retry_attempted = bool(
+                self.cfg.root_threshold_refine_retry
+                and not refine_probe_eligible
+                and _is_threshold_sensitive_failure(
+                    dict(refine_probe), tuple(refine_probe_reasons)
+                )
+            )
+            refine_retry_selected = False
+            refine_retry_reasons: tuple[str, ...] = ()
+            refine_result: dict[str, Any] | None = None
+            if refine_retry_attempted:
+                cfg_refine = replace(
+                    cfg_species,
+                    v_full_init=None,
+                    stage1_max_iter=0,
+                    bound_zero_tail_refine=True,
+                    bound_zero_tail_max_binding_ha=max(
+                        float(cfg_species.bound_zero_tail_max_binding_ha),
+                        _ROOT_THRESHOLD_RETRY_MAX_BINDING_HA,
+                    ),
+                    stage2_max_iter=max(
+                        int(cfg_species.stage2_max_iter),
+                        _ROOT_THRESHOLD_RETRY_MAX_ITER,
+                    ),
+                    scf_dn_tol=min(
+                        float(cfg_species.scf_dn_tol),
+                        _ROOT_THRESHOLD_RETRY_CHANGE_TOL,
+                    ),
+                    scf_dv_tol=min(
+                        float(cfg_species.scf_dv_tol),
+                        _ROOT_THRESHOLD_RETRY_CHANGE_TOL,
+                    ),
+                )
+                refine_result = _solve_species_from_config(cfg_refine)
+                self._species_result_cache_misses += 1
+                self._species_threshold_refine_retries += 1
+                refine_eligible, refine_retry_reasons = _species_result_eligibility(
+                    dict(refine_result)
+                )
+                if refine_eligible:
+                    result_species = refine_result
+                    refine_retry_selected = True
+
             # Starrett & Saumon (2014), Appendix B, require convergence with
             # respect to the B3 handoff radius.  In a pressure-ionization
             # window the oscillatory B3 term can sit on a numerically
@@ -1409,7 +1523,11 @@ class _MixtureEvaluator:
             # is *only* a root-coordinate surrogate: it may guide the outer
             # theta search, but it must not enter the requested-model species
             # cache or be returned without a final full-B3 verification.
-            tail_retry_probe = cold_result if cold_result is not None else result_species
+            tail_retry_probe = (
+                refine_result
+                if refine_result is not None
+                else (cold_result if cold_result is not None else result_species)
+            )
             tail_probe_eligible, tail_probe_reasons = _species_result_eligibility(
                 dict(tail_retry_probe)
             )
@@ -1467,6 +1585,18 @@ class _MixtureEvaluator:
             )
             result_species["mixture_threshold_cold_retry_reasons"] = tuple(
                 cold_reasons
+            )
+            result_species["mixture_threshold_refine_retry_attempted"] = bool(
+                refine_retry_attempted
+            )
+            result_species["mixture_threshold_refine_retry_selected"] = bool(
+                refine_retry_selected
+            )
+            result_species["mixture_threshold_refine_retry_initial_reasons"] = tuple(
+                refine_probe_reasons
+            )
+            result_species["mixture_threshold_refine_retry_reasons"] = tuple(
+                refine_retry_reasons
             )
             result_species["mixture_threshold_b3_a_only_retry_attempted"] = bool(
                 tail_retry_attempted
@@ -1576,6 +1706,12 @@ class _MixtureEvaluator:
             hist_row[f"threshold_cold_retry_selected_{symbol}"] = bool(
                 result_species.get("mixture_threshold_cold_retry_selected", False)
             )
+            hist_row[f"threshold_refine_retry_attempted_{symbol}"] = bool(
+                result_species.get("mixture_threshold_refine_retry_attempted", False)
+            )
+            hist_row[f"threshold_refine_retry_selected_{symbol}"] = bool(
+                result_species.get("mixture_threshold_refine_retry_selected", False)
+            )
             hist_row[f"threshold_b3_a_only_retry_attempted_{symbol}"] = bool(
                 result_species.get(
                     "mixture_threshold_b3_a_only_retry_attempted", False
@@ -1594,7 +1730,19 @@ class _MixtureEvaluator:
                 hist_row[f"dmu_{symbol}_{self.symbols[-1]}_ha"] = float(residual[idx])
         self.history.append(hist_row)
 
-        if self.cfg.show_mu_progress or self.cfg.verbose:
+        if (
+            self.cfg.show_progress
+            or self.cfg.show_mu_progress
+            or self.cfg.debug
+            or self.cfg.verbose
+        ):
+            if not (self.cfg.debug or self.cfg.verbose):
+                print(
+                    "[mixture] "
+                    f"iter={int(self._eval_counter):3d}  "
+                    f"max|dmu|={float(np.max(np.abs(residual))):.3e} Ha"
+                )
+                return record
             theta_txt = "[" + ", ".join(f"{float(val):.6f}" for val in theta_arr) + "]"
             mu_txt = "  ".join(
                 f"mu_{symbol}={float(mu_values[idx]):.6f} Ha" for idx, symbol in enumerate(self.symbols)
@@ -1636,6 +1784,22 @@ class _MixtureEvaluator:
                         else "failed"
                     )
                     cold_retry_txt = f"  threshold_cold_retry={retry_state}"
+                refine_retry_txt = ""
+                if bool(
+                    result_species.get(
+                        "mixture_threshold_refine_retry_attempted", False
+                    )
+                ):
+                    retry_state = (
+                        "selected"
+                        if bool(
+                            result_species.get(
+                                "mixture_threshold_refine_retry_selected", False
+                            )
+                        )
+                        else "failed"
+                    )
+                    refine_retry_txt = f"  threshold_refine_retry={retry_state}"
                 tail_retry_txt = ""
                 if bool(
                     result_species.get(
@@ -1671,6 +1835,7 @@ class _MixtureEvaluator:
                     f"(iters={int(result_species.get('stage2_iters', 0))}, err={stage2_err:.3e})  "
                     f"Zbar={float(result_species.get('zbar', np.nan)):.6f}"
                     f"{cold_retry_txt}"
+                    f"{refine_retry_txt}"
                     f"{tail_retry_txt}"
                 )
             if not point_converged:
@@ -2534,6 +2699,14 @@ def solve_mixture_full_only(
                             )
                         )
                     ),
+                    "root_threshold_refine_retries": int(
+                        evaluator._species_threshold_refine_retries
+                        + int(
+                            verified_meta.get(
+                                "root_threshold_refine_retries", 0
+                            )
+                        )
+                    ),
                     "root_threshold_b3_root_surrogates": int(
                         evaluator._species_threshold_b3_root_surrogates
                     ),
@@ -2611,6 +2784,9 @@ def solve_mixture_full_only(
                 "root_species_solves": int(evaluator._species_result_cache_misses),
                 "root_threshold_cold_retries": int(
                     evaluator._species_threshold_cold_retries
+                ),
+                "root_threshold_refine_retries": int(
+                    evaluator._species_threshold_refine_retries
                 ),
                 "root_threshold_b3_a_only_retries": int(
                     evaluator._species_threshold_b3_a_only_retries
@@ -2722,7 +2898,9 @@ def _final_species_config(
         "ext_scf_enabled": bool(run_mode != "full"),
         "r_ws_override_bohr": float(r_ws_bohr),
         "n_i_override_bohr3": float(n_i_bohr3),
-        "show_scf_progress": bool(cfg.show_progress),
+        "show_scf_progress": bool(cfg.debug or cfg.verbose),
+        "show_summary": bool(cfg.show_progress),
+        "debug": bool(cfg.debug or cfg.verbose),
         "verbose": bool(cfg.verbose),
         **cfg.aa_overrides,
         **extra_overrides,
@@ -2742,6 +2920,35 @@ def _final_species_config(
         == "auto"
     ):
         species_kwargs["b3_tail_model"] = "a_only"
+    if (
+        isinstance(full_result_init, dict)
+        and bool(
+            full_result_init.get(
+                "mixture_threshold_refine_retry_selected", False
+            )
+        )
+    ):
+        species_kwargs["bound_zero_tail_refine"] = True
+        species_kwargs["bound_zero_tail_max_binding_ha"] = max(
+            float(species_kwargs.get("bound_zero_tail_max_binding_ha", 1.0e-3)),
+            _ROOT_THRESHOLD_RETRY_MAX_BINDING_HA,
+        )
+        species_kwargs["stage2_max_iter"] = max(
+            int(species_kwargs.get("stage2_max_iter", 107)),
+            _ROOT_THRESHOLD_RETRY_MAX_ITER,
+        )
+        species_kwargs["scf_dn_tol"] = min(
+            float(species_kwargs.get("scf_dn_tol", 1.0e-5)),
+            _ROOT_THRESHOLD_RETRY_CHANGE_TOL,
+        )
+        species_kwargs["scf_dv_tol"] = min(
+            float(species_kwargs.get("scf_dv_tol", 1.0e-5)),
+            _ROOT_THRESHOLD_RETRY_CHANGE_TOL,
+        )
+        species_kwargs["stage1_max_iter"] = 0
+        species_kwargs["continuation_stage2_from_init"] = True
+        if "mu" in full_result_init:
+            species_kwargs["continuation_mu_init"] = float(full_result_init["mu"])
     cfg_species = FullExternalConfig(
         **species_kwargs
     )

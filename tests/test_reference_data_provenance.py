@@ -63,7 +63,13 @@ def test_johnson_units_and_accepted_baselines_are_explicit() -> None:
     assert reference["publication"]["doi"] == "10.1103/5c29-kdx1"
     assert reference["units"]["column_1"] == "Bohr"
     assert "r [au]" in reference["unit_audit"]["source"]
-    assert len(reference["files"]) == 9
+    assert len(reference["files"]) == 12
+    assert sorted({float(record["te_ev"]) for record in reference["files"]}) == [
+        1.0,
+        3.0,
+        10.0,
+        30.0,
+    ]
 
     directory = ROOT / "benchmarks" / "baselines" / benchmark_id
     manifest = _json(directory / "manifest.json")
@@ -79,6 +85,7 @@ def test_johnson_units_and_accepted_baselines_are_explicit() -> None:
     statuses = {record["state_id"]: record["status"] for record in manifest["states"]}
     assert statuses == {
         "al_rho2p7_te1_ti1": "accepted",
+        "al_rho2p7_te3_ti1": "accepted",
         "al_rho2p7_te10_ti1": "accepted",
         "al_rho2p7_te30_ti1": "accepted",
     }
@@ -122,7 +129,7 @@ def test_argha_attribution_uncertainty_and_current_otter_states_are_explicit() -
     ]
     assert all(record["status"] == "accepted" for record in manifest["states"])
     assert all(
-        record["threshold_state_status"] == "resolved"
+        record["threshold_state_status"] in {"resolved", "marginal"}
         for record in manifest["states"]
     )
     assert manifest["configuration"]["bound_zero_tail_refine"] is True

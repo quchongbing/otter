@@ -178,8 +178,10 @@ def _load_pylibxc() -> Any:
             raise
         raise LibXCUnavailableError(
             "XC model requires the optional Libxc Python bindings. Install "
-            "pylibxc (for example, conda install -c conda-forge pylibxc) "
-            "or select xc_model='dirac'."
+            "them with 'poetry install --extras libxc'. This source build "
+            "requires CMake and a C compiler; see "
+            "https://libxc.gitlab.io/installation/. Otherwise select the "
+            "built-in xc_model='dirac'."
         ) from exc
 
 

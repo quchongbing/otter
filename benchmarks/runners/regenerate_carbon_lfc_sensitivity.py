@@ -138,29 +138,19 @@ def _configuration(
             None if ion_temperature_ev is None else float(ion_temperature_ev)
         ),
         rho_g_cc=float(RHO_G_CC),
-        electronic_model="qm",
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            "b3_tail_model": "full",
             "bound_zero_tail_refine": True,
             "bound_zero_tail_max_binding_ha": 1.0e-2,
             "bound_zero_tail_scan_points": 48,
             "bound_zero_tail_edge_rel_tol": 0.1,
         },
         qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
         qoz_response_lfc_model=str(lfc_model),
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TRANSFORM_TOL,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 

@@ -11,7 +11,7 @@ Otter is based primarily on the pseudoatom model of
 
 ## Capabilities
 
-- finite-temperature quantum and Thomas–Fermi electronic structure; the
+- finite-temperature quantum(KS-DFT, QM) and Thomas–Fermi (TF) electronic structure; the
   quantum model provides orbital levels, occupations, and density components;
 - pseudoatom densities `n_ion(r)` and `n_scr(r)`, with form factors
   `f(k)=n_ion(k)` and `q(k)=n_scr(k)`;
@@ -50,6 +50,21 @@ poetry install
 
 Dependencies are locked by `poetry.lock`; Otter is installed in editable mode.
 
+Otter's built-in local-density Dirac exchange is the dependency-free default
+used by the validated warm- and hot-dense-matter workflows. Libxc is optional
+and is needed only for additional LDA correlation or GGA functionals such as
+`lda_pw`, `lda_pz`, `lda_vwn`, and `pbe`.
+
+To enable these additional functionals:
+
+```bash
+poetry install --extras libxc
+```
+
+PyPI distributes the Libxc Python bindings as source, so this optional step
+requires CMake and a C compiler. See the
+[XC installation guide](https://quchongbing.github.io/otter/user_guide/xc_functionals.html#installation).
+
 ```console
 poetry run python -c "import otter; print(otter.__version__)"
 ```
@@ -58,6 +73,10 @@ An unlocked fallback is `python -m pip install -e .`. See the
 [installation guide](https://quchongbing.github.io/otter/installing.html).
 
 ## Quick start
+
+Run an introductory calculation in Google Colab:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/quchongbing/otter/blob/main/notebooks/00-otter_intro.ipynb)
 
 Run the complete [single-species workflow](examples/single_species_workflow.py)
 from the repository root:
@@ -73,16 +92,20 @@ NPZ files.
 
 For mixtures, run [mixture_workflow.py](examples/mixture_workflow.py).
 
-### Saved `q/f/g/S`
+### Saved workflow state
 
-The versioned NPZ schema stores:
+The versioned NPZ schema stores the native electronic profiles and bound
+levels, `q/f`, electron response and LFC, electron/ion interaction channels,
+and `g_ij/S_ij`, together with units and convergence metadata.  In particular:
 
 - `q_k == n_scr_k` and `f_k == n_ion_k`;
-- `gij_r`, `sij_k`, and (when available) `vij_k`;
-- species ordering, units, model settings, and convergence metadata.
+- `g_ee_k`, `chi0_k`, `chi_ee_k`, `v_ie_k`, `c_ie_k`, `v_ee_k`, and `c_ee_k`;
+- `gij_r`, `sij_k`, `vij_r`, and `vij_k`.
 
 The default windows are `r < 20 Bohr` and `k < 20 Bohr^-1`. Archives load with
-`allow_pickle=False` and are written atomically.
+`allow_pickle=False` and are written atomically. See the
+[state-export guide](docs/source/user_guide/state_exports.rst) for in-memory
+and NPZ access.
 
 Quantum continuum calculations can be slow near pressure ionization.
 `continue_plasma_workflow_from_electronic_result` reuses a validated
@@ -125,28 +148,38 @@ poetry run python -m build
 poetry run python -m twine check dist/*
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for numerical and benchmark review
+Anyone interested in Otter is welcome to contribute. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for numerical and benchmark review
 requirements and [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 
 ## Citation
 
-Use [CITATION.cff](CITATION.cff) to cite the software, and cite the primary
-model papers listed in the documentation for the features used. The central
-method reference is:
+If you use Otter in a scientific publication, please cite:
 
-C. E. Starrett and D. Saumon, “A simple method for determining the ionic
-structure of warm dense matter,” *High Energy Density Physics* **10**, 35–42
-(2014), [doi:10.1016/j.hedp.2013.12.001](https://doi.org/10.1016/j.hedp.2013.12.001).
+> Chongbing Qu, *Otter*, version 0.2.1, computer software (2026),
+> [https://github.com/quchongbing/otter](https://github.com/quchongbing/otter).
 
-Runs using optional Libxc functionals must additionally cite Libxc and every
-selected functional. Otter records the installed Libxc version, exact
-functional IDs, and Libxc-provided references in `xc_provenance`; see the
-[XC citation guide](docs/source/user_guide/xc_functionals.rst).
+```bibtex
+@misc{Qu2026Otter,
+  author  = {Qu, Chongbing},
+  title   = {Otter},
+  year    = {2026},
+  note    = {Computer software, version 0.2.1},
+  url     = {https://github.com/quchongbing/otter}
+}
+```
 
-The repository-wide citation contract is documented in
-[`CITATIONS.md`](CITATIONS.md). Runtime configuration objects provide
+The same metadata are available in [CITATION.cff](CITATION.cff). Otter is
+also available through GitHub's **Cite this repository** menu. Runtime
+configuration objects provide
 `config.citation(style="plain"|"bibtex"|"cite")` and expose their canonical
-`citation_keys`, so reports can record exactly which physical models were
-selected.
+`citation_keys` as scientific provenance for selected physical models; these
+are not additional software-citation requirements. See
+[`CITATIONS.md`](CITATIONS.md).
+
+## Acknowledgements
+
+Chongbing Qu gratefully acknowledges financial support from HEDI and the China
+Scholarship Council (CSC).
 
 Otter is distributed under the [BSD 3-Clause License](LICENSE).

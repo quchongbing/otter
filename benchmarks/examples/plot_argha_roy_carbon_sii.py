@@ -32,6 +32,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -40,13 +41,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
-from otter.plotting import save_figure, set_style
+from otter.plotting import grid_figsize, save_figure, set_style
 
 
 # =============================================================================
 # User input
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
+if os.environ.get("OTTER_RECOMPUTE_ARGHA_CARBON", "0") == "1":
+    USE_PRECOMPUTED_DATA = False
 
 # Four state workers x four continuum workers uses at most about 16 workers.
 # All five displayed temperatures are attempted; no more than four run
@@ -54,7 +57,6 @@ USE_PRECOMPUTED_DATA = True
 # MAX_STATE_WORKERS = 1 for a serial, memory-conservative calculation.
 MAX_STATE_WORKERS = 4
 CONTINUUM_WORKERS_PER_STATE = 4
-AA_N_POINTS = 1024
 QOZ_N_POINTS = 4096
 
 PLOT_TEMPERATURES_EV = (20.0, 30.0, 40.0, 50.0, 100.0)
@@ -180,13 +182,9 @@ def workflow_config(state: dict[str, Any]) -> PlasmaWorkflowConfig:
         temperature_ev=float(state["te_ev"]),
         ion_temperature_ev=float(state["ti_ev"]),
         rho_g_cc=float(state["rho_g_cc"]),
-        electronic_model="qm",
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
             # Exterior-match a near-zero-energy pole only when the common
             # physical SCF boundary is already asymptotic.  No artificial
             # extended bound-only box is introduced.
@@ -194,19 +192,10 @@ def workflow_config(state: dict[str, Any]) -> PlasmaWorkflowConfig:
             "bound_zero_tail_max_binding_ha": 1.0e-2,
             "bound_zero_tail_scan_points": 64,
             "bound_zero_tail_edge_rel_tol": 0.1,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model=str(LFC_MODEL),
         hnc_tol=float(HNC_TOL),
         hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -245,7 +234,7 @@ def solve_state(state: dict[str, Any]) -> tuple[str, dict[str, np.ndarray]]:
         "state": state,
         "electronic_model": "qm",
         "structure_model": "IS",
-        "aa_n_points": AA_N_POINTS,
+        "aa_n_points": 4096,
         "bound_occ_mode": "fd",
         "bound_rmax_mult": None,
         "bound_zero_tail_refine": True,
@@ -419,7 +408,9 @@ for temperature in PLOT_TEMPERATURES_EV:
 # provided by Dr. Argha Roy.  Curves are vertically offset by 0.3.
 
 set_style("thesis", palette="bing")
-fig, axis = plt.subplots(figsize=(3.54, 4.0))
+fig, axis = plt.subplots(
+    figsize=grid_figsize(1, 1, cell_width=5.2, cell_height=5.8)
+)
 colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 otter_color = colors[0]
 dft_md_color = colors[2]

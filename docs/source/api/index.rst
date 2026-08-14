@@ -26,8 +26,10 @@ below.
 Portable state schema
 ---------------------
 
-The stable state-file interface stores :math:`q(k)`, :math:`f(k)`,
-:math:`g_{ij}(r)`, and :math:`S_{ij}(k)` without pickled Python objects.  See
+The stable state-file interface stores the native average-atom profiles and
+levels together with :math:`q(k)`, :math:`f(k)`, electron response and LFC,
+interaction channels, :math:`V_{ij}`, :math:`g_{ij}`, and :math:`S_{ij}`
+without pickled Python objects.  See
 :doc:`../user_guide/state_exports` for shapes, units, and examples.
 
 .. currentmodule:: otter.io.state

@@ -3,17 +3,17 @@
   "benchmark_id": "carbon_lfc_sensitivity",
   "status": "accepted",
   "metrics_file": "metrics.csv",
-  "metrics_sha256": "980d54d287475507cdd11cfc9481730805e909244007c7028b05a70db54896fb",
+  "metrics_sha256": "dbbf841670edc65c5040666aae3c53b9a388fab8c454040c6ec4a9736688d881",
   "title": "Carbon finite-temperature LFC sensitivity at 5 g cm^-3",
   "producer": {
     "project": "Otter",
-    "git_commit": "abf0ddd583d34a51c72623fc472cbbd652c5d8db",
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
     "script_relative_path": "benchmarks/runners/regenerate_carbon_lfc_sensitivity.py",
-    "script_sha256": "374ce9a8070ef55eece0a2accc0fe37f0fcfa2ac54722f646b946cd98ac77bf1",
-    "script_sha256_at_generation": "374ce9a8070ef55eece0a2accc0fe37f0fcfa2ac54722f646b946cd98ac77bf1",
-    "script_sha256_current": "b378897ab41ec847b6db1c15a3b0a3fc30b748fc79e9afa015d67772dc562424",
-    "worktree_clean_at_generation": true,
-    "git_status_porcelain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "script_sha256": "d5d23771df62c09193332c462867ff88d385090e132e36b0c8d775c8f7f956d2",
+    "script_sha256_at_generation": "d5d23771df62c09193332c462867ff88d385090e132e36b0c8d775c8f7f956d2",
+    "script_sha256_current": "d5d23771df62c09193332c462867ff88d385090e132e36b0c8d775c8f7f956d2",
+    "worktree_clean_at_generation": false,
+    "git_status_porcelain_sha256": "2796b72036b6ba2038eb771ffb93f2c81b8836b44f39d559aeb349c18c3261e6",
     "note": "git_commit identifies HEAD only. When worktree_clean_at_generation is false, script_sha256 and the status hash disclose that uncommitted source participated."
   },
   "data_rights": {
@@ -99,20 +99,28 @@
     "hnc_transform_closure_tolerance": 0.0001,
     "strict_electronic_convergence_required": true,
     "allow_unconverged_aa": false,
-    "resolution_rationale": "4096 radial points follow Starrett--Saumon (2014), Appendix B, after a 1024/2048/4096 threshold audit at 100 eV. A near-threshold state is checked by matching to a zero-potential exterior at the common outer SCF boundary; this numerical refinement is motivated by the threshold-state discussion of Starrett et al. (2019), but is not asserted to reproduce their ion-sphere boundary implementation. No separate bound-only radial extension is used."
+    "resolution_rationale": "4096 radial points follow Starrett--Saumon (2014), Appendix B, after a 1024/2048/4096 threshold audit at 100 eV. A near-threshold state is checked by matching to a zero-potential exterior at the common outer SCF boundary; this numerical refinement is motivated by Starrett et al. (2019), but is not asserted to reproduce their ion-sphere boundary implementation. No separate bound-only radial extension is used."
   },
   "states": [
     {
       "rho_g_cc": 5.0,
       "temperature_ev": 2.0,
       "data_file": "C_rho5gcc_T2eV_lfc.npz",
-      "data_sha256": "c6f63ce0a25ec7fb7f73960cd6ff053b487a35001c27ce154faeff0149bbef4b"
+      "data_sha256": "3801d95e0b6fab1620f95a3ecdb3f22824bcf8cf48d05fbfbe92b2ff5968a729",
+      "zbar_partition": 4.000010553039886,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "n_model_points": 5875
     },
     {
       "rho_g_cc": 5.0,
       "temperature_ev": 100.0,
       "data_file": "C_rho5gcc_T100eV_lfc.npz",
-      "data_sha256": "c10b2a1a3fd3874b55fe01c6b73bfbb4660305201281ea9912f484169f292a31"
+      "data_sha256": "9a191f8b4945122c8c8f654c688425d47980eb497b5d983433e329492916883c",
+      "zbar_partition": 4.546742347627054,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "zero_tail_matched",
+      "n_model_points": 5875
     }
   ]
 }

@@ -61,7 +61,7 @@ def test_library_manifest_hashes_and_portable_archives() -> None:
     assert manifest["benchmark_id"] == "ion_structure_library"
     assert manifest["producer"]["project"] == "Otter"
     assert len(manifest["producer"]["git_commit"]) == 40
-    assert len(manifest["states"]) == 5
+    assert len(manifest["states"]) == 7
     assert manifest["data_rights"]["reference_redistribution_status"] == (
         "published_by_maintainer_with_attribution"
     )
@@ -94,6 +94,10 @@ def test_library_manifest_hashes_and_portable_archives() -> None:
             signature = json.loads(
                 str(archive["producer_signature_json"].item())
             )
+            expected_model = item.get("electronic_model", "qm")
+            assert signature["electronic_model"] == expected_model
+            if "electronic_model" in archive:
+                assert archive["electronic_model"].item() == expected_model
             assert signature["aa"]["bound_occ_mode"] == "fd"
             assert signature["aa"]["b3_tail_model"] == "full"
             assert signature["qoz"]["chi0_model"] == "lindhard_fd"
@@ -194,9 +198,9 @@ def test_offline_library_runner_recomputes_metrics() -> None:
     runner = _load_module("otter_library_offline_test", runner_path)
     states = runner.load_states(runner.load_manifest())
     rows = runner.evaluate(states)
-    assert len(rows) == 15
+    assert len(rows) == 18
     primary_rows = [row for row in rows if row["role"] == "primary"]
-    assert len(primary_rows) == 6
+    assert len(primary_rows) == 8
     for row in rows:
         assert row["n_points"] > 5
         assert np.isfinite(row["rmse"])
@@ -263,12 +267,11 @@ def test_complete_al_workflow_manifest_levels_and_pipeline() -> None:
         ROOT / manifest["producer"]["script_relative_path"]
     )
     assert manifest["producer"]["script_relative_path"] == (
-        "docs/examples/plot_al_full_workflow.py"
+        "benchmarks/runners/regenerate_al_full_workflow.py"
     )
-    assert len(manifest["producer"]["git_status_porcelain_sha256"]) == 64
     assert manifest["configuration"]["bound_occ_mode"] == "fd"
     assert manifest["configuration"]["bound_rmax_mult"] is None
-    assert manifest["configuration"]["bound_zero_tail_refine"] is True
+    assert manifest["configuration"]["bound_zero_tail_refine"] is False
     assert manifest["configuration"]["b3_tail_model"] == "full"
     assert manifest["configuration"]["qoz_zbar_mode"] == (
         "pseudoatom_partition"

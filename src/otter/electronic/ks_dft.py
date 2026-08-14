@@ -425,6 +425,7 @@ class KSDTFConfig(CitationMixin):
     charge_tol: float | None = None
     zbar_tol: float | None = None
     verbose: bool = False
+    debug: bool = False
     mu_verbose: bool = False
     print_every: int = 1
     store_scf_snapshots_last: int | None = None
@@ -1417,6 +1418,112 @@ def _bound_density(r: np.ndarray,
             n_bound += occ * factor * (np.abs(R) ** 2)
 
     return n_bound
+
+
+def _bound_orbital_density_tables(
+    r_bound: np.ndarray,
+    eigvals: np.ndarray,
+    eigvecs: np.ndarray,
+    l_list: np.ndarray,
+    mu: float,
+    temperature: float,
+    *,
+    energy_cut: float,
+    bound_occ_mode: str,
+    gamma: float,
+    cutoff: np.ndarray,
+    r_target: np.ndarray,
+    r_ws: float,
+    ws_weight_min: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return orbital contributions to ``n_bound`` and ``n_ion``.
+
+    The first table uses the same occupation convention as
+    :func:`_bound_density`.  The second additionally applies the
+    Starrett--Saumon pressure-ionization weight and radial cutoff used by
+    :func:`_ion_density`.  Both arrays use ``(l, n, r_target)`` ordering.
+    """
+    r_source = np.asarray(r_bound, dtype=float)
+    r_out = np.asarray(r_target, dtype=float)
+    values = np.asarray(eigvals, dtype=float)
+    vectors = np.asarray(eigvecs, dtype=float)
+    angular = np.asarray(l_list, dtype=int)
+    cutoff_arr = np.asarray(cutoff, dtype=float)
+    if values.ndim == 2 and vectors.shape == (
+        values.shape[0],
+        values.shape[1],
+        r_source.size,
+    ):
+        vectors = np.transpose(vectors, (0, 2, 1))
+    if values.ndim != 2 or vectors.shape != (
+        values.shape[0],
+        r_source.size,
+        values.shape[1],
+    ):
+        raise ValueError("eigvals/eigvecs must use aligned (l, r, n) shapes.")
+    if angular.shape != (values.shape[0],):
+        raise ValueError("l_list must align with the eigenvalue table.")
+    if cutoff_arr.shape != r_source.shape:
+        raise ValueError("cutoff must align with r_bound.")
+    if r_out.ndim != 1 or np.any(np.diff(r_out) <= 0.0):
+        raise ValueError("r_target must be a strictly increasing vector.")
+
+    mode = str(bound_occ_mode).strip().lower()
+    if mode not in {"fd", "fd_m"}:
+        raise ValueError("bound_occ_mode must be 'fd' or 'fd_m'.")
+    ws_min = float(ws_weight_min)
+    if ws_min < 0.0 or ws_min > 1.0:
+        raise ValueError("ws_weight_min must be in [0, 1].")
+
+    bound = np.zeros((*values.shape, r_out.size), dtype=float)
+    ion = np.zeros_like(bound)
+    r_safe = np.maximum(r_source, 1.0e-14)
+    same_grid = r_out.shape == r_source.shape and np.allclose(r_out, r_source)
+    for l_index, l_value in enumerate(angular):
+        degeneracy_density = (
+            2.0 * (2.0 * float(l_value) + 1.0) / (4.0 * np.pi)
+        )
+        for state_index in range(values.shape[1]):
+            energy = float(values[l_index, state_index])
+            if not np.isfinite(energy) or energy >= float(energy_cut):
+                continue
+            fd = float(
+                fermi_dirac(
+                    np.asarray([energy], dtype=float),
+                    float(mu),
+                    float(temperature),
+                )[0]
+            )
+            if fd <= 0.0:
+                continue
+            radial = np.abs(
+                vectors[l_index, :, state_index] / np.sqrt(r_safe)
+            ) ** 2
+            if ws_min > 0.0:
+                probability = radial * r_source**2
+                normalization = _trapz(probability, r_source)
+                inside = r_source <= float(r_ws)
+                if normalization <= 0.0 or (
+                    _trapz(probability[inside], r_source[inside]) / normalization
+                    < ws_min
+                ):
+                    continue
+            pressure_weight = float(_ion_level_weight(energy, float(gamma)))
+            bound_weight = fd * (pressure_weight if mode == "fd_m" else 1.0)
+            bound_profile = bound_weight * degeneracy_density * radial
+            ion_profile = (
+                fd
+                * pressure_weight
+                * degeneracy_density
+                * radial
+                * cutoff_arr
+            )
+            if not same_grid:
+                bound_profile = interp_to_grid(r_source, bound_profile, r_out)
+                ion_profile = interp_to_grid(r_source, ion_profile, r_out)
+            bound[l_index, state_index] = bound_profile
+            ion[l_index, state_index] = ion_profile
+    return bound, ion
 
 
 def _refine_shallow_bound_states_zero_tail(
@@ -2728,13 +2835,13 @@ def _scf_fixed_mu(config: KSDTFConfig,
     # PH-enabled iterate; this subtracts only a constant and never imposes an
     # outer radial taper.
     shift_tail = bool(config.shift_v_eff_tail or ph_gauge_fix)
-    if config.shift_v_eff_tail and config.verbose:
+    if config.shift_v_eff_tail and config.debug:
         print(
             "  [SCF] Enabling V_eff tail shift to align zero-energy cutoff "
             f"(mode={config.v_tail_mode}, frac={config.v_tail_fraction})."
         )
     outer_decay = bool(config.full_v_eff_outer_decay)
-    if outer_decay and config.verbose:
+    if outer_decay and config.debug:
         print(
             "  [SCF] Enabling experimental full V_eff outer decay "
             f"(start={float(config.full_v_eff_outer_decay_start_rws):.3f}*R_ws, "
@@ -2811,13 +2918,16 @@ def _scf_fixed_mu(config: KSDTFConfig,
         )
 
     if config.verbose:
-        print(f"  [SCF] mu={mu:.6f} Ha, n0={n0:.6e}")
-        if compute_external:
+        if not config.debug:
+            print("  iter |       d_n |       d_v")
+        else:
+            print(f"  [SCF] mu={mu:.6f} Ha, n0={n0:.6e}")
+        if config.debug and compute_external:
             print(
                 "  iter | dn_rel | dv_rel | Q_full | Q_bound | Q_cont | "
                 "Zbar | charge_rel | dZbar"
             )
-        else:
+        elif config.debug:
             print(
                 "  iter | dn_rel | dv_rel | Q_full | Q_bound | Q_cont | "
                 "Zbar | charge_rel"
@@ -3732,7 +3842,9 @@ def _scf_fixed_mu(config: KSDTFConfig,
             "perf": perf if perf_on else None,
         })
         if config.verbose and (it % max(int(config.print_every), 1) == 0):
-            if compute_external:
+            if not config.debug:
+                print(f"  {it:4d} | {dn_rel:9.3e} | {dv_rel:9.3e}")
+            elif compute_external:
                 print(
                     f"  {it:3d} | {dn_rel:7.3e} | {dv_rel:7.3e} | "
                     f"{charge_ws:7.3f} | {charge_bound:7.3f} | {charge_cont:7.3f} | "
@@ -3744,8 +3856,9 @@ def _scf_fixed_mu(config: KSDTFConfig,
                     f"{charge_ws:7.3f} | {charge_bound:7.3f} | {charge_cont:7.3f} | "
                     f"{zbar:7.3f} | {charge_rel:9.3e}"
                 )
-            print(f"      cont_e_max={float(cont_e_max_iter):.6f} Ha")
-            if perf_on and perf_show_stage and (it % perf_every == 0):
+            if config.debug:
+                print(f"      cont_e_max={float(cont_e_max_iter):.6f} Ha")
+            if config.debug and perf_on and perf_show_stage and (it % perf_every == 0):
                 print(
                     "      perf[s]: "
                     f"prep_basis={perf.get('prep_basis', 0.0):.3f}, "
@@ -3900,6 +4013,10 @@ def _scf_fixed_mu(config: KSDTFConfig,
         "zbar": float(zbar),
         "bound_state_diagnostics": bound_diagnostics,
         "zero_tail_bound_meta": dict(zero_tail_bound_meta),
+        "_bound_eigvals": np.asarray(vals, dtype=float),
+        "_bound_eigvecs": np.asarray(vecs, dtype=float),
+        "_bound_energy_cut": float(energy_cut),
+        "_bound_ion_cutoff": np.asarray(ion_cut, dtype=float),
         **_bound_diagnostic_result_fields(bound_diagnostics),
         **_continuum_spectral_output_fields(
             r_cont,
@@ -4004,13 +4121,13 @@ def _scf_neutral_inner(config: KSDTFConfig,
     # physical V(infinity)=0 gauge or an otherwise harmless constant tail
     # offset can be misclassified as a diffuse near-zero bound state.
     shift_tail = bool(config.shift_v_eff_tail or ph_gauge_fix)
-    if config.shift_v_eff_tail and config.verbose:
+    if config.shift_v_eff_tail and config.debug:
         print(
             "  [SCF] Enabling V_eff tail shift to align zero-energy cutoff "
             f"(mode={config.v_tail_mode}, frac={config.v_tail_fraction})."
         )
     outer_decay = bool(config.full_v_eff_outer_decay)
-    if outer_decay and config.verbose:
+    if outer_decay and config.debug:
         print(
             "  [SCF] Enabling experimental full V_eff outer decay "
             f"(start={float(config.full_v_eff_outer_decay_start_rws):.3f}*R_ws, "
@@ -4085,13 +4202,16 @@ def _scf_neutral_inner(config: KSDTFConfig,
         )
 
     if config.verbose:
-        print(f"  [SCF] mu={mu:.6f} Ha, n0={n0:.6e}")
-        if compute_external:
+        if not config.debug:
+            print("  iter |       d_n |       d_v")
+        else:
+            print(f"  [SCF] mu={mu:.6f} Ha, n0={n0:.6e}")
+        if config.debug and compute_external:
             print(
                 "  iter | dn_rel | dv_rel | Q_full | Q_bound | Q_cont | "
                 "Zbar | charge_rel | dZbar"
             )
-        else:
+        elif config.debug:
             print(
                 "  iter | dn_rel | dv_rel | Q_full | Q_bound | Q_cont | "
                 "Zbar | charge_rel"
@@ -4100,7 +4220,7 @@ def _scf_neutral_inner(config: KSDTFConfig,
     mu_solver = str(config.mu_solver).lower().strip()
     if mu_solver not in ("bracket", "brent", "secant"):
         raise ValueError("mu_solver must be 'bracket', 'brent', or 'secant'.")
-    mu_verbose = bool(getattr(config, "mu_verbose", False))
+    mu_verbose = bool(getattr(config, "mu_verbose", False) and config.debug)
     mu_lo, mu_hi = map(float, config.mu_bounds)
     if mu_lo >= mu_hi:
         raise ValueError("mu_bounds must be (mu_min, mu_max) with mu_min < mu_max.")
@@ -5355,6 +5475,10 @@ def _scf_neutral_inner(config: KSDTFConfig,
             "energy_cache_ext": energy_cache_ext,
             "bound_state_diagnostics": bound_diagnostics_local,
             "zero_tail_bound_meta": dict(zero_tail_bound_meta),
+            "_bound_eigvals": np.asarray(vals, dtype=float),
+            "_bound_eigvecs": np.asarray(vecs, dtype=float),
+            "_bound_energy_cut": float(energy_cut),
+            "_bound_ion_cutoff": np.asarray(ion_cut, dtype=float),
             "debug_bound_eigvals": (np.asarray(vals, dtype=float) if config.store_final_bound_debug else None),
             "debug_bound_eigvecs": (np.asarray(vecs, dtype=float) if config.store_final_bound_debug else None),
             "debug_energy_cut": (float(energy_cut) if config.store_final_bound_debug else np.nan),
@@ -5391,7 +5515,7 @@ def _scf_neutral_inner(config: KSDTFConfig,
             if charge_rel_try <= _CONT_E_MAX_RETRY_CHARGE_REL_TOL:
                 break
             if retry_idx == _CONT_E_MAX_RETRY_MAX_TRIES - 1:
-                if config.verbose:
+                if config.debug:
                     print(
                         "      [e_max-retry] "
                         f"iter={it:3d}, charge_rel={charge_rel_try:.3e}; "
@@ -5399,7 +5523,7 @@ def _scf_neutral_inner(config: KSDTFConfig,
                     )
                 break
             next_e_max = float(attempt_state["cont_e_max_iter"]) + _CONT_E_MAX_RETRY_STEP_HA
-            if config.verbose:
+            if config.debug:
                 print(
                     "      [e_max-retry] "
                     f"iter={it:3d}, charge_rel={charge_rel_try:.3e}; "
@@ -5699,7 +5823,9 @@ def _scf_neutral_inner(config: KSDTFConfig,
 
         # (18) Optional iteration printout.
         if config.verbose and (it % config.print_every == 0):
-            if compute_external:
+            if not config.debug:
+                print(f"  {it:4d} | {dn_rel:9.3e} | {dv_rel:9.3e}")
+            elif compute_external:
                 print(
                     f"  {it:3d} | {dn_rel:7.3e} | {dv_rel:7.3e} | "
                     f"{charge_ws:7.3f} | {charge_bound:7.3f} | {charge_cont:7.3f} | "
@@ -6102,6 +6228,12 @@ def _scf_neutral_inner(config: KSDTFConfig,
         "ion_gamma": float(final_state.get("ion_gamma", np.nan)),
         "bound_state_diagnostics": bound_diagnostics,
         "zero_tail_bound_meta": dict(final_state.get("zero_tail_bound_meta", {})),
+        "_bound_eigvals": np.asarray(final_state["_bound_eigvals"], dtype=float),
+        "_bound_eigvecs": np.asarray(final_state["_bound_eigvecs"], dtype=float),
+        "_bound_energy_cut": float(final_state["_bound_energy_cut"]),
+        "_bound_ion_cutoff": np.asarray(
+            final_state["_bound_ion_cutoff"], dtype=float
+        ),
         **_bound_diagnostic_result_fields(bound_diagnostics),
         **_continuum_spectral_output_fields(
             r_cont,
@@ -6253,7 +6385,7 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
                 "charge_err": float(charge1),
                 "f_ws": _f_ws(result1),
             })
-            if config.verbose:
+            if config.debug:
                 if result1.get("neutrality_mode", "ws") == "ws":
                     print(f"[mu iter] mu={mu1:.4f}, charge_err={charge1:.3e}")
                 else:
@@ -6274,14 +6406,14 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
             max_step = max(abs(mu1 - mu0), abs(config.mu_bracket_step))
             delta = mu_new - mu1
             if abs(delta) > max_step:
-                if config.verbose:
+                if config.debug:
                     print("  [mu] Secant step limited to stay near initial guess.")
                 mu_new = mu1 + np.sign(delta) * max_step
 
             if not np.isfinite(mu_new):
                 raise ValueError("secant update produced non-finite mu; adjust mu_bounds or mu_bracket_step.")
             if mu_new <= mu_min_bound or mu_new >= mu_max_bound:
-                if config.verbose:
+                if config.debug:
                     print("  [mu] Secant step hit mu_bounds; clamping.")
                 eps = 1e-6 * (mu_max_bound - mu_min_bound)
                 mu_new = min(max(mu_new, mu_min_bound + eps), mu_max_bound - eps)
@@ -6326,10 +6458,10 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
         if not _zbar_ok(result_hi):
             if mu_solver == "brent":
                 raise ValueError("mu_hi yields zbar below mu_zbar_min; increase mu_hi or lower mu_zbar_min.")
-            if config.verbose:
+            if config.debug:
                 print("  [mu] mu_hi yields Zbar below mu_zbar_min; continuing bracket.")
 
-    if config.verbose:
+    if config.debug:
         if result_lo.get("neutrality_mode", "ws") == "ws":
             print(f"[mu bracket] mu_lo={mu_lo:.3f}, charge_err={charge_lo:.3e}")
             print(f"[mu bracket] mu_hi={mu_hi:.3f}, charge_err={charge_hi:.3e}")
@@ -6362,7 +6494,7 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
                     blocked_by_zbar = True
                     break
                 last_valid = (mu_lo, result_lo, charge_lo)
-                if config.verbose:
+                if config.debug:
                     if result_lo.get("neutrality_mode", "ws") == "ws":
                         print(f"[mu expand] mu_lo={mu_lo:.3f}, charge_err={charge_lo:.3e}")
                     else:
@@ -6377,7 +6509,7 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
                 if not _zbar_ok(result_hi):
                     blocked_by_zbar = True
                     break
-                if config.verbose:
+                if config.debug:
                     if result_hi.get("neutrality_mode", "ws") == "ws":
                         print(f"[mu expand] mu_hi={mu_hi:.3f}, charge_err={charge_hi:.3e}")
                     else:
@@ -6422,7 +6554,7 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
                 "charge_err": float(charge),
                 "f_ws": _f_ws(result),
             })
-            if config.verbose:
+            if config.debug:
                 if result.get("neutrality_mode", "ws") == "ws":
                     print(f"[mu iter] mu={mu_key:.4f}, charge_err={charge:.3e}")
                 else:
@@ -6439,7 +6571,7 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
             maxiter=int(config.mu_max_iter),
         )
         result_root, charge_root = cache.get(float(mu_root), _eval_mu(mu_root, v_full, v_ext))
-        if abs(charge_root) > config.mu_tol and config.verbose:
+        if abs(charge_root) > config.mu_tol and config.debug:
             print(f"  [mu] Brent root charge_err={charge_root:.3e} exceeds mu_tol={config.mu_tol:.3e}")
         result_root["mu_history"] = mu_history
         return result_root
@@ -6461,7 +6593,7 @@ def solve_ks_dft_is(config: KSDTFConfig) -> Dict[str, Any]:
             "f_ws": _f_ws(result_mid),
         })
 
-        if config.verbose:
+        if config.debug:
             if result_mid.get("neutrality_mode", "ws") == "ws":
                 print(f"[mu iter] mu={mu_mid:.4f}, charge_err={charge_mid:.3e}")
             else:

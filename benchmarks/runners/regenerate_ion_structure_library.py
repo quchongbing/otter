@@ -42,7 +42,6 @@ from otter import (  # noqa: E402
 # the desktop responsive and cover BLAS/runtime overhead.
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
-AA_N_POINTS = 1024
 QOZ_N_POINTS = 4096
 R_RETAIN_MAX_BOHR = 20.0
 K_RETAIN_MAX_BOHR_INV = 20.0
@@ -83,6 +82,24 @@ STATE_GROUPS: dict[str, tuple[dict[str, Any], ...]] = {
             "ti_ev": 2.0,
         },
     ),
+    "al_clerouin_tf": (
+        {
+            "state_id": "al_clerouin_rho8p1_te10_ti10_tf",
+            "element": "Al",
+            "rho_g_cc": 8.1,
+            "te_ev": 10.0,
+            "ti_ev": 10.0,
+            "electronic_model": "tf",
+        },
+        {
+            "state_id": "al_clerouin_rho8p1_te10_ti2_tf",
+            "element": "Al",
+            "rho_g_cc": 8.1,
+            "te_ev": 10.0,
+            "ti_ev": 2.0,
+            "electronic_model": "tf",
+        },
+    ),
     "be_wunsch": (
         {
             "state_id": "be_wunsch_rho5p544_te13_ti13",
@@ -99,15 +116,6 @@ STATE_GROUPS: dict[str, tuple[dict[str, Any], ...]] = {
             "rho_g_cc": 20.0,
             "te_ev": 50.0,
             "ti_ev": 50.0,
-        },
-    ),
-    "c_starrett_cold": (
-        {
-            "state_id": "c_starrett_rho3p7_te8p62_ti8p62",
-            "element": "C",
-            "rho_g_cc": 3.7,
-            "te_ev": 8.62,
-            "ti_ev": 8.62,
         },
     ),
 }
@@ -128,43 +136,25 @@ def _git_commit() -> str:
 
 def _configuration(state: dict[str, Any]) -> PlasmaWorkflowConfig:
     """Build the documented production configuration for one state."""
-    is_cold_carbon = str(state["state_id"]) == "c_starrett_rho3p7_te8p62_ti8p62"
-    state_n_points = 4096 if is_cold_carbon else int(AA_N_POINTS)
     return PlasmaWorkflowConfig(
         elements=[str(state["element"])],
         temperature_ev=float(state["te_ev"]),
         ion_temperature_ev=float(state["ti_ev"]),
         rho_g_cc=float(state["rho_g_cc"]),
+        electronic_model=str(state.get("electronic_model", "qm")),
         aa_overrides={
-            "n_points": state_n_points,
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            # Production uses the common AA radial domain documented by
-            # Starrett--Saumon (2014), Appendix B.  The exterior threshold
-            # match below acts on that same physical box; it does not create
-            # a separate extended bound-only domain.
-            "bound_rmax_mult": None,
             "bound_zero_tail_refine": True,
             "bound_zero_tail_max_binding_ha": 1.0e-2,
             "bound_zero_tail_scan_points": 64,
             "bound_zero_tail_edge_rel_tol": 0.1,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        hnc_tol=1.0e-4,
         # Keep the nonlinear root strict while independently allowing the
         # measured ~2e-3 finite-DST g<->S mismatch of cold, strongly coupled
         # Al.  This does not relax positivity or fixed-point checks.
         hnc_closure_transform_tol=2.5e-3,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -247,17 +237,12 @@ def _pack_result(
     ion_mask = r_i <= R_RETAIN_MAX_BOHR
     k_mask = k <= K_RETAIN_MAX_BOHR_INV
 
-    state_n_points = (
-        4096
-        if str(state["state_id"]) == "c_starrett_rho3p7_te8p62_ti8p62"
-        else int(AA_N_POINTS)
-    )
     signature = {
         "state": state,
         "structure_model": "IS",
-        "electronic_model": "qm",
+        "electronic_model": str(state.get("electronic_model", "qm")),
         "aa": {
-            "n_points": state_n_points,
+            "n_points": 4096,
             "bound_occ_mode": "fd",
             "bound_rmax_mult": None,
             "bound_zero_tail_refine": True,
@@ -285,6 +270,9 @@ def _pack_result(
         "schema_version": np.asarray(SCHEMA),
         "benchmark_id": np.asarray("ion_structure_library"),
         "state_id": np.asarray(str(state["state_id"])),
+        "electronic_model": np.asarray(
+            str(state.get("electronic_model", "qm"))
+        ),
         "element": np.asarray(str(state["element"])),
         "rho_g_cc": np.asarray(float(state["rho_g_cc"])),
         "te_ev": np.asarray(float(state["te_ev"])),

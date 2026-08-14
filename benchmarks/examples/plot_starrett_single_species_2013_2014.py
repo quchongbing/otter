@@ -52,7 +52,6 @@ USE_PRECOMPUTED_DATA = True
 # worker on a memory-constrained host.
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
-AA_N_POINTS = 1024
 QOZ_N_POINTS = int(
     os.environ.get("OTTER_STARRETT_SINGLE_QOZ_POINTS", "4096")
 )
@@ -534,25 +533,13 @@ def workflow_config(state: dict[str, Any]) -> PlasmaWorkflowConfig:
         rho_g_cc=float(state["rho_g_cc"]),
         electronic_model=str(state["model"]),
         aa_overrides={
-            "n_points": int(AA_N_POINTS),
             "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
             "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
         qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model=str(LFC_MODEL),
         hnc_tol=float(HNC_TOL),
         hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -771,7 +758,7 @@ set_style("thesis", palette="bing")
 fig, axes = plt.subplots(
     2,
     3,
-    figsize=grid_figsize(2, 3, cell_width=4.15, cell_height=3.35),
+    figsize=grid_figsize(2, 3),
     squeeze=False,
 )
 axes_flat = axes.ravel()
@@ -816,13 +803,30 @@ for axis, physical in zip(axes_flat, PHYSICAL_STATES, strict=True):
             label=str(style["label"]),
         )
 
+    missing_models = [
+        model
+        for model in ("qm", "tf")
+        if f"{panel_id}_{model}" not in states
+    ]
+    if missing_models:
+        axis.text(
+            0.03,
+            0.05,
+            "No accepted Otter "
+            + "/".join(model.upper() for model in missing_models)
+            + " result",
+            transform=axis.transAxes,
+            fontsize="small",
+            color="0.35",
+        )
+
     axis.axhline(1.0, color="#777777", ls=":", lw=0.8)
     axis.set_xlim(-0.5, float(physical["x_max"]))
     axis.set_ylim(-0.04, 1.86)
     axis.set_title(str(physical["title"]))
     axis.set_xlabel(r"$r/R_{\rm WS}$")
     axis.set_ylabel(r"$g_{ii}(r)$")
-    axis.legend(fontsize=7.2, loc="best")
+    axis.legend(fontsize="small", loc="best")
 
 fig.suptitle(
     "Single-species ion structure: Otter and Starrett–Saumon references",

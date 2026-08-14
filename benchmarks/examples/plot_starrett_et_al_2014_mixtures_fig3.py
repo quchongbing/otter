@@ -57,6 +57,8 @@ from otter.plotting import PAIR_COLORS, grid_figsize, save_figure, style_context
 # User input
 # =============================================================================
 USE_PRECOMPUTED_DATA = True
+if os.environ.get("OTTER_RECOMPUTE_STARRETT_FIG3", "0") == "1":
+    USE_PRECOMPUTED_DATA = False
 
 DENSITIES_G_CC = (2.94, 5.0, 15.0)
 TEMPERATURES_KK = (20, 50, 100)
@@ -67,10 +69,7 @@ MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
 SPECIES_PARALLEL_JOBS = 1
 
-AA_N_POINTS = 4096
-QOZ_N_POINTS = 4096
 MU_E_TOL_HA = 1.0e-4
-ROOT_TOL = 1.0e-4
 ROOT_MAXFEV = 32
 ROOT_BRENT_MAXITER = 24
 HNC_TOL = 1.0e-5
@@ -190,28 +189,13 @@ def load_precomputed_results(
 def aa_overrides() -> dict[str, Any]:
     """Return the documented IS-QM Appendix-B electronic controls."""
     return {
-        "n_points": int(AA_N_POINTS),
         "cont_n_jobs": int(CONTINUUM_WORKERS_PER_STATE),
         "cont_shards": int(2 * CONTINUUM_WORKERS_PER_STATE),
-        "bound_occ_mode": "fd",
-        # The ordinary full-AA radial domain is also the bound-state domain.
-        # No experimental far-away bound-only zero box is enabled.
-        "bound_rmax_mult": None,
-        "bound_zero_tail_refine": False,
-        "b3_tail_stage1_mode": "in_scf",
-        "b3_tail_stage2_mode": "in_scf",
-        "ext_b3_tail_mode": "in_scf",
         "b3_tail_target": "full",
-        "b3_tail_model": "full",
-        "b3_tail_fit_window_mode": "local",
-        "b3_tail_local_fit_width_mult": 0.064,
         "b3_r_cut_mult": 3.0,
         "b3_r_fit_max_mult": 4.0,
-        "b3_source_charge_constraint": False,
         "full_b3_use_source_closure": False,
         "ext_b3_use_source_closure": False,
-        "ph_kappa": 0.0,
-        "ph_kappa_iters": 0,
     }
 
 
@@ -227,35 +211,13 @@ def workflow_config(
         temperature_ev=temperature_ev,
         ion_temperature_ev=temperature_ev,
         rho_g_cc=float(rho_g_cc),
-        electronic_model="qm",
-        run_mode="full+ext",
         aa_overrides=aa_overrides(),
-        mu_e_tol=float(MU_E_TOL_HA),
-        root_tol=float(ROOT_TOL),
         root_maxfev=int(ROOT_MAXFEV),
         root_brent_maxiter=int(ROOT_BRENT_MAXITER),
-        root_threshold_b3_surrogate_mode="a_only_when_full_unresolved",
-        allow_unconverged_root=False,
-        allow_unconverged_aa=False,
         species_parallel_jobs=int(SPECIES_PARALLEL_JOBS),
-        species_parallel_backend="thread",
-        qoz_linear_n_points=int(QOZ_N_POINTS),
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        qoz_high_k_taper_start_frac=0.9,
         hnc_tol=float(HNC_TOL),
         hnc_closure_transform_tol=float(HNC_CLOSURE_TOL),
         hnc_max_iter=int(HNC_MAX_ITER),
-        hnc_require_converged=True,
-        hnc_enforce_nodal_tail_zero=False,
-        hnc_s_projection_mode="none",
-        show_progress=False,
-        show_mu_progress=False,
-        verbose=False,
-        save_data=False,
     )
 
 
@@ -466,7 +428,7 @@ plot_style.enter_context(style_context("thesis", palette="bing"))
 fig, axes = plt.subplots(
     3,
     3,
-    figsize=grid_figsize(3, 3, cell_width=3.8, cell_height=2.75),
+    figsize=grid_figsize(3, 3),
     sharex=True,
     sharey=True,
 )
@@ -537,8 +499,8 @@ fig.suptitle(r"CH$_{1.36}$: Starrett et al. (2014), Figure 3", y=0.985)
 fig.text(
     0.5,
     0.006,
-    "Reference data: Starrett and Saumon (2014), "
-    "doi:10.1016/j.hedp.2013.12.001.",
+    "Reference data: Starrett et al. (2014), "
+    "doi:10.1103/PhysRevE.90.033110.",
     ha="center",
     va="bottom",
     fontsize=7.5,

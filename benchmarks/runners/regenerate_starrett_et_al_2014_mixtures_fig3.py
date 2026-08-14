@@ -59,9 +59,9 @@ DENSITIES_G_CC = (2.94, 5.0, 15.0)
 TEMPERATURES_KK = (20, 50, 100)
 MAX_STATE_WORKERS = 3
 CONTINUUM_WORKERS_PER_STATE = 6
+CONTINUUM_SHARDS = 32
 SPECIES_PARALLEL_JOBS = 1
 
-AA_N_POINTS = 4096
 QOZ_N_POINTS = 4096
 MU_E_TOL_HA = 1.0e-4
 ROOT_TOL = 1.0e-4
@@ -159,28 +159,13 @@ def _producer_metadata() -> dict[str, Any]:
 def aa_overrides() -> dict[str, Any]:
     """Return the documented IS-QM Appendix-B electronic controls."""
     return {
-        "n_points": AA_N_POINTS,
         "cont_n_jobs": CONTINUUM_WORKERS_PER_STATE,
-        "cont_shards": 2 * CONTINUUM_WORKERS_PER_STATE,
-        "bound_occ_mode": "fd",
-        # The ordinary AA radial domain is the production bound-state domain;
-        # the experimental far-away bound-only box is intentionally disabled.
-        "bound_rmax_mult": None,
-        "bound_zero_tail_refine": False,
-        "b3_tail_stage1_mode": "in_scf",
-        "b3_tail_stage2_mode": "in_scf",
-        "ext_b3_tail_mode": "in_scf",
+        "cont_shards": CONTINUUM_SHARDS,
         "b3_tail_target": "full",
-        "b3_tail_model": "full",
-        "b3_tail_fit_window_mode": "local",
-        "b3_tail_local_fit_width_mult": 0.064,
         "b3_r_cut_mult": 3.0,
         "b3_r_fit_max_mult": 4.0,
-        "b3_source_charge_constraint": False,
         "full_b3_use_source_closure": False,
         "ext_b3_use_source_closure": False,
-        "ph_kappa": 0.0,
-        "ph_kappa_iters": 0,
     }
 
 
@@ -192,35 +177,13 @@ def configuration(state: State) -> PlasmaWorkflowConfig:
         temperature_ev=state.temperature_ev,
         ion_temperature_ev=state.temperature_ev,
         rho_g_cc=state.rho_g_cc,
-        electronic_model="qm",
-        run_mode="full+ext",
         aa_overrides=aa_overrides(),
-        mu_e_tol=MU_E_TOL_HA,
-        root_tol=ROOT_TOL,
         root_maxfev=ROOT_MAXFEV,
         root_brent_maxiter=ROOT_BRENT_MAXITER,
-        root_threshold_b3_surrogate_mode="a_only_when_full_unresolved",
-        allow_unconverged_root=False,
-        allow_unconverged_aa=False,
         species_parallel_jobs=SPECIES_PARALLEL_JOBS,
-        species_parallel_backend="thread",
-        qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        qoz_high_k_taper_start_frac=0.9,
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TRANSFORM_TOL,
         hnc_max_iter=HNC_MAX_ITER,
-        hnc_require_converged=True,
-        hnc_enforce_nodal_tail_zero=False,
-        hnc_s_projection_mode="none",
-        show_progress=False,
-        show_mu_progress=False,
-        verbose=False,
-        save_data=False,
     )
 
 

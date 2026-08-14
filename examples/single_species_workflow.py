@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
-from otter.plotting import save_figure, set_style
+from otter.plotting import grid_figsize, save_figure, set_style
 
 # ===========================================
 #            user input parameters
@@ -21,7 +21,6 @@ TE_EV = 15.0
 TI_EV = 15.0
 # -------------------------------------------
 
-SHOW_SCF_PROGRESS = True
 SAVE_NPZ = True
 OUTPUT_PATH = ROOT / "outputs" / "al_rho8p1_T15_state.npz"
 SAVE_FIGURES = True
@@ -76,28 +75,21 @@ def main() -> None:
         temperature_ev=TE_EV,
         rho_g_cc=RHO_G_CC,
         ion_temperature_ev=TI_EV,
-        show_progress=SHOW_SCF_PROGRESS,
         save_state_npz=SAVE_NPZ,
         save_state_path=OUTPUT_PATH,
+        #electronic_model='tf', # run semiclassical Thomas-Fermi model for the electronic structure; default is ks-dft (QM)
     )
     result = solve_plasma_workflow(cfg)
     ion = result["ion"]
     electronic = result["electronic"]["result"]
 
-    print(f"element={ELEMENT} Te={TE_EV:g} eV Ti={TI_EV:g} eV rho={RHO_G_CC:g} g/cc")
-    print(f"mu={electronic['mu']:.8f} Ha  zbar={electronic['zbar']:.8f}")
-    print(
-        "threshold="
-        f"{electronic.get('threshold_state_status', 'none')}  "
-        f"representation={electronic.get('threshold_state_representation', 'none')}  "
-        f"E_shallow={float(electronic.get('shallowest_bound_energy_ha', np.nan)):.8e} Ha"
-    )
-    print(
-        f"HNC iterations={ion['hnc_iters']}  qoz={ion['qoz_build_s']:.3f}s hnc={ion['hnc_solve_s']:.3f}s"
-    )
-
     set_style("docs", palette="deep_science")
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=grid_figsize(2, 2),
+        constrained_layout=True,
+    )
     ax_density, ax_potential, ax_gii, ax_sii = axes.ravel()
 
     r_e = np.asarray(electronic["r"], dtype=float)
@@ -111,7 +103,7 @@ def main() -> None:
             color="black",
             linestyle="--",
             linewidth=1.3,
-            label=r"$4\pi r^2 n_0$",
+            label=r"$n_0$",
         )
     r_ws = _r_ws_from_result(electronic)
     if r_ws is not None:
@@ -124,7 +116,7 @@ def main() -> None:
         )
     ax_density.set_xlabel(r"$r\,[a_0]$")
     ax_density.set_ylabel(r"$4\pi r^2 n(r)\,[a_0^{-1}]$")
-    ax_density.legend(fontsize=8)
+    ax_density.legend()
     ax_density.set_ylim(-0.5, 15)
     ax_density.set_xlim(-0.5, 8)
 
@@ -153,21 +145,21 @@ def main() -> None:
     ax_potential.set_ylabel(r"$V_{\mathrm{eff}}(r)\,[\mathrm{Ha}]$")
     ax_potential.set_xlim(-0.5, 8.0)
     ax_potential.set_ylim(-1.0, 1.0)
-    ax_potential.legend(fontsize=8)
+    ax_potential.legend()
 
     r_ion = np.asarray(ion["r"], dtype=float)
     ax_gii.plot(r_ion, ion["gii_r"], label=r"$g_{ii}(r)$")
     ax_gii.set_xlabel(r"$r\,[a_0]$")
     ax_gii.set_ylabel(r"$g_{ii}(r)$")
     ax_gii.set_xlim(-0.5, 20.0)
-    ax_gii.legend(fontsize=8)
+    ax_gii.legend()
 
     k_ion = np.asarray(ion["k"], dtype=float)
     ax_sii.plot(k_ion, ion["sii_k"], label=r"$S_{ii}(k)$")
     ax_sii.set_xlabel(r"$k\,[a_0^{-1}]$")
     ax_sii.set_ylabel(r"$S_{ii}(k)$")
     ax_sii.set_xlim(0.0, 20.0)
-    ax_sii.legend(fontsize=8)
+    ax_sii.legend()
     if SAVE_FIGURES:
         paths = save_figure(fig, FIGURE_STEM)
         print(

@@ -64,7 +64,7 @@ from otter.electronic.xc import (
     xc_potential,
     xc_provenance,
 )
-from otter.plotting import save_figure, set_style
+from otter.plotting import grid_figsize, save_figure, set_style
 
 
 HARTREE_TO_EV = 27.211386245988
@@ -380,7 +380,12 @@ def _plot_summary(rows: list[dict[str, Any]], output_dir: Path) -> None:
         return
     models = list(dict.fromkeys(str(row["xc_model"]) for row in rows))
     densities = sorted({float(row["rho_g_cc"]) for row in rows})
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=grid_figsize(2, 2),
+        constrained_layout=True,
+    )
     panels = (
         ("zbar", "Zbar", "Average ionization"),
         ("mu_ev", "mu (eV)", "Chemical potential"),
@@ -459,7 +464,7 @@ def _plot_bound_levels(rows: list[dict[str, Any]], output_dir: Path) -> None:
     ncols = len(level_keys)
     fig, axes = plt.subplots(
         nrows, ncols, squeeze=False,
-        figsize=(4.0 * ncols, 3.0 * nrows),
+        figsize=grid_figsize(nrows, ncols),
         constrained_layout=True,
     )
     colors = dict(zip(models, plt.cm.tab10.colors[: len(models)]))
@@ -520,7 +525,12 @@ def _plot_profiles(
     ]
     if not selected:
         return
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=grid_figsize(2, 2),
+        constrained_layout=True,
+    )
     for row in selected:
         with np.load(output_dir / str(row["archive"]), allow_pickle=False) as data:
             r = np.asarray(data["r_bohr"], dtype=float)
@@ -563,7 +573,10 @@ def _plot_profiles(
     save_figure(fig, output_dir / name, dpi=180)
     plt.close(fig)
 
-    fig_core, ax_core = plt.subplots(figsize=(7.2, 4.8), constrained_layout=True)
+    fig_core, ax_core = plt.subplots(
+        figsize=grid_figsize(1, 1),
+        constrained_layout=True,
+    )
     plotted = False
     for row in selected:
         with np.load(output_dir / str(row["archive"]), allow_pickle=False) as data:
@@ -627,7 +640,6 @@ def build_config(
         temperature_ev=temperature,
         ion_temperature_ev=temperature,
         rho_g_cc=rho,
-        electronic_model="qm",
         xc_model=xc_model,
         gga_core_mode=gga_core_mode,
         gga_core_zr=gga_core_zr,
@@ -635,27 +647,17 @@ def build_config(
             "n_points": n_points,
             "cont_n_jobs": continuum_workers,
             "cont_shards": max(1, 2 * continuum_workers),
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
             "bound_zero_tail_refine": True,
             "bound_zero_tail_max_binding_ha": 1.0e-2,
             "bound_zero_tail_scan_points": 64,
             "bound_zero_tail_edge_rel_tol": 0.1,
-            "b3_tail_model": "full",
             # Track several extra radial and angular channels for the level plots.
             "bound_auto_n_pad": 3,
             "bound_auto_l_pad": 2,
         },
         qoz_linear_n_points=qoz_n_points,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        hnc_tol=1.0e-4,
         hnc_closure_transform_tol=1.0e-3,
         hnc_max_iter=hnc_max_iter,
-        hnc_require_converged=True,
         show_progress=show_progress,
     )
 

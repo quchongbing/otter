@@ -2,7 +2,7 @@
   "schema_version": "otter_benchmark_manifest_v1",
   "benchmark_id": "ion_structure_library",
   "title": "Otter ion-structure literature comparisons",
-  "description": "Portable Otter average-atom plus QOZ/HNC states paired with the provenance-audited subset of the local form-factor library.",
+  "description": "Portable Otter KS and Thomas--Fermi average-atom plus QOZ/HNC states paired with the provenance-audited subset of the local form-factor library.",
   "data_rights": {
     "baseline_origin_type": "project_generated_numerical_output",
     "reference_data_in_separate_package": true,
@@ -27,17 +27,17 @@
   ],
   "producer": {
     "project": "Otter",
-    "git_commit": "0637066cf76dfdd70f80b4238375c540d7c96a1c",
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
     "script_relative_path": "benchmarks/runners/regenerate_ion_structure_library.py",
-    "script_sha256": "c5d50130e0bc83c634cf93c044b1c020c51836c6bd98468f3c5b1a9997ced032",
-    "script_sha256_at_generation": "c5d50130e0bc83c634cf93c044b1c020c51836c6bd98468f3c5b1a9997ced032",
-    "script_sha256_current": "4ce96ea98bcc0d527be2e424816efc09ccbc134adac5c50599807b30f46ff1ab",
-    "note": "The generator and independent HNC transform-closure tolerance were committed before these files were produced; each NPZ embeds the same revision and a complete result-affecting signature."
+    "script_sha256": "91e28a665b861e7a9f37afc75a202a84703ff7930ab75c7c5557eae6bd5cbf3c",
+    "script_sha256_at_generation": "8145a2c22c3fb9ca5b365f9a2341a3c7caa9d89cbed271ff49df0de7ad1fd8b1",
+    "script_sha256_current": "91e28a665b861e7a9f37afc75a202a84703ff7930ab75c7c5557eae6bd5cbf3c",
+    "note": "All archived states were generated with this producer script in the recorded working tree; the embedded signatures record the resolved 4096-point calculation settings.",
+    "worktree_clean": false
   },
   "configuration": {
-    "electronic_model": "qm",
     "structure_model": "IS",
-    "aa_n_points": 1024,
+    "aa_n_points": 4096,
     "bound_occ_mode": "fd",
     "b3_tail_model": "full",
     "continuum_workers_per_state": 6,
@@ -49,9 +49,13 @@
     "lfc_model": "chabrier1990",
     "hnc_nonlinear_tolerance": 0.0001,
     "hnc_transform_closure_tolerance": 0.0025,
-    "hnc_max_iterations": 500,
+    "hnc_max_iterations": 1000,
     "r_retained_max_bohr": 20.0,
-    "k_retained_max_bohr_inv": 20.0
+    "k_retained_max_bohr_inv": 20.0,
+    "electronic_models": [
+      "qm",
+      "tf"
+    ]
   },
   "units": {
     "radius": "Bohr",
@@ -73,8 +77,13 @@
       "te_ev": 5.0,
       "ti_ev": 5.0,
       "baseline_file": "al_gill_rho2p7_te5_ti5.npz",
-      "baseline_sha256": "f13f86bd00ea82ecebe13e5a066d7f6ba923ade6fe8c2d3a83e861021e2013c9",
-      "reference_family": "GillEtAl2015"
+      "baseline_sha256": "c972172c013cdace81033222a6aad7a1a7820e0d3ad35b9b1f732ffa0e30aaac",
+      "reference_family": "GillEtAl2015",
+      "zbar_partition": 3.000510517183633,
+      "hnc_closure_mismatch": 6.562636010654099e-05,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "n_model_points": 1826
     },
     {
       "state_id": "al_clerouin_rho8p1_te10_ti10",
@@ -83,8 +92,14 @@
       "te_ev": 10.0,
       "ti_ev": 10.0,
       "baseline_file": "al_clerouin_rho8p1_te10_ti10.npz",
-      "baseline_sha256": "30b7ae657bd379fa4555570e3007ead3308a85ddd0f7f964a71d694a92337395",
-      "reference_family": "ClerouinEtAl2015"
+      "baseline_sha256": "2f8a4991b1b8c62fc1f450ffd33fa830dbbb3c2d6884190bdd03485c725b14bc",
+      "reference_family": "ClerouinEtAl2015",
+      "electronic_model": "qm",
+      "zbar_partition": 3.036920594001046,
+      "hnc_closure_mismatch": 1.4566153101802648e-05,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "n_model_points": 2634
     },
     {
       "state_id": "al_clerouin_rho8p1_te10_ti2",
@@ -93,8 +108,46 @@
       "te_ev": 10.0,
       "ti_ev": 2.0,
       "baseline_file": "al_clerouin_rho8p1_te10_ti2.npz",
-      "baseline_sha256": "44e44d706cebceb3356689e52a271333afd1dda7428922ac40cb3b2863049b55",
-      "reference_family": "ClerouinEtAl2015"
+      "baseline_sha256": "4acc0af77c0d14a666e929777a40543b87b45704e9636c9dc518d200e611b9df",
+      "reference_family": "ClerouinEtAl2015",
+      "electronic_model": "qm",
+      "zbar_partition": 3.036920594001046,
+      "hnc_closure_mismatch": 0.0002858818950086661,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "n_model_points": 2634
+    },
+    {
+      "state_id": "al_clerouin_rho8p1_te10_ti10_tf",
+      "element": "Al",
+      "rho_g_cc": 8.1,
+      "te_ev": 10.0,
+      "ti_ev": 10.0,
+      "electronic_model": "tf",
+      "baseline_file": "al_clerouin_rho8p1_te10_ti10_tf.npz",
+      "baseline_sha256": "fe37b67721eb02800279399f3a4f6efe7c42ce96231ed000c47f1210498d1ba7",
+      "reference_family": "ClerouinEtAl2015",
+      "zbar_partition": 4.878856625734317,
+      "hnc_closure_mismatch": 0.0005149469690082231,
+      "threshold_state_status": "not_applicable_tf",
+      "threshold_state_representation": "none",
+      "n_model_points": 2634
+    },
+    {
+      "state_id": "al_clerouin_rho8p1_te10_ti2_tf",
+      "element": "Al",
+      "rho_g_cc": 8.1,
+      "te_ev": 10.0,
+      "ti_ev": 2.0,
+      "electronic_model": "tf",
+      "baseline_file": "al_clerouin_rho8p1_te10_ti2_tf.npz",
+      "baseline_sha256": "87daf65462231cd0cb387ff0a27b170225c00e879a8e62affab0b1fa4b2f357d",
+      "reference_family": "ClerouinEtAl2015",
+      "zbar_partition": 4.878856625734317,
+      "hnc_closure_mismatch": 0.0003092933660728825,
+      "threshold_state_status": "not_applicable_tf",
+      "threshold_state_representation": "none",
+      "n_model_points": 2634
     },
     {
       "state_id": "be_wunsch_rho5p544_te13_ti13",
@@ -103,8 +156,13 @@
       "te_ev": 13.0,
       "ti_ev": 13.0,
       "baseline_file": "be_wunsch_rho5p544_te13_ti13.npz",
-      "baseline_sha256": "20778c4b78ae4776578694a10e3fa001541193d05830f7b1db1fc0033d85c140",
-      "reference_family": "WunschEtAl2009"
+      "baseline_sha256": "a00a5527d0b60931d9dcbcb11cad23d5e136d8da38ed96dc4528757ffc739152",
+      "reference_family": "WunschEtAl2009",
+      "zbar_partition": 2.0074566572559402,
+      "hnc_closure_mismatch": 1.3807534535614785e-05,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "n_model_points": 3346
     },
     {
       "state_id": "c_starrett_rho20_te50_ti50",
@@ -113,12 +171,17 @@
       "te_ev": 50.0,
       "ti_ev": 50.0,
       "baseline_file": "c_starrett_rho20_te50_ti50.npz",
-      "baseline_sha256": "4ab005f0ccb35210cda8b5565203e01dea20b1e76dd42b3db0bbb6327d0e9518",
-      "reference_family": "StarrettPrivateCommunication"
+      "baseline_sha256": "cfa55182320952976c7263501df831257e0aefe57e9fe54761361fa80a727693",
+      "reference_family": "StarrettPrivateCommunication",
+      "zbar_partition": 4.0165710408543305,
+      "hnc_closure_mismatch": 2.609629333971686e-05,
+      "threshold_state_status": "resolved",
+      "threshold_state_representation": "finite_dirichlet_box",
+      "n_model_points": 4664
     }
   ],
   "excluded_extension": {
     "state_id": "c_starrett_rho3p7_te8p62_ti8p62",
-    "reason": "Otter's threshold-state reliability gate rejects the unresolved pressure-ionization state; it is not force-continued into QOZ/HNC."
+    "reason": "This state is not part of the current plotted literature-library baseline."
   }
 }

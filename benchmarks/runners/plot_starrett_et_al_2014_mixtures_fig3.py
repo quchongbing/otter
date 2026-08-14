@@ -164,12 +164,15 @@ def load_result(path: Path) -> dict[str, np.ndarray]:
     if object_keys:
         raise TypeError(f"Object arrays are forbidden in {path}: {object_keys}")
     schema = str(result["schema_version"].item())
-    if schema == "otter_starrett_mixtures_fig3_baseline_v1":
+    if schema in {
+        "otter_starrett_mixtures_fig3_baseline_v1",
+        "otter_gallery_starrett_fig3_v1",
+    }:
         labels = tuple(str(value) for value in result["pair_labels"])
         if labels != PAIR_ORDER:
             raise ValueError(f"Unexpected pair order in {path}: {labels}")
         return result
-    if schema == "otter_state_v1":
+    if schema in {"otter_state_v1", "otter_state_v2", "otter_state_v3"}:
         symbols = tuple(str(value) for value in result["species_symbols"])
         if symbols != ("C", "H"):
             raise ValueError(f"Unexpected species order in {path}: {symbols}")
@@ -301,7 +304,7 @@ def plot_states(
     fig, axes = plt.subplots(
         3,
         3,
-        figsize=(14.4, 10.95),
+        figsize=otter_plotting.grid_figsize(3, 3),
         sharex=True,
         sharey=True,
         squeeze=False,

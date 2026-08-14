@@ -69,7 +69,6 @@ REFERENCE_LFC = "chabrier1990"
 
 MAX_STATE_WORKERS = 2
 CONTINUUM_WORKERS_PER_STATE = 6
-AA_N_POINTS = 4096
 QOZ_N_POINTS = 8192
 HNC_TOL = 1.0e-5
 HNC_CLOSURE_TOL = 1.0e-4
@@ -165,30 +164,19 @@ def workflow_config(
             None if ion_temperature_ev is None else float(ion_temperature_ev)
         ),
         rho_g_cc=RHO_G_CC,
-        electronic_model="qm",
         aa_overrides={
-            "n_points": AA_N_POINTS,
             "cont_n_jobs": CONTINUUM_WORKERS_PER_STATE,
             "cont_shards": 2 * CONTINUUM_WORKERS_PER_STATE,
-            "bound_occ_mode": "fd",
-            "bound_rmax_mult": None,
             "bound_zero_tail_refine": True,
             "bound_zero_tail_max_binding_ha": 1.0e-2,
             "bound_zero_tail_scan_points": 48,
             "bound_zero_tail_edge_rel_tol": 0.1,
-            "b3_tail_model": "full",
         },
         qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
         qoz_response_lfc_model=str(lfc_model),
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -336,7 +324,7 @@ def low_k_decomposition(
         "charge": charge_array,
         "lfc": lfc_array,
         "chi0": chi0_array,
-        "common": charge_array + chi0_array,
+        "shared_non_lfc": charge_array + chi0_array,
     }
 
 
@@ -439,12 +427,7 @@ with style_context("thesis", palette="bing"):
     fig_density, density_axes = plt.subplots(
         1,
         len(states),
-        figsize=grid_figsize(
-            1,
-            len(states),
-            cell_width=5.0,
-            cell_height=3.5,
-        ),
+        figsize=grid_figsize(1, len(states)),
         squeeze=False,
     )
     for axis, state in zip(density_axes[0], states, strict=True):
@@ -494,12 +477,7 @@ with style_context("thesis", palette="bing"):
     fig_response, response_axes = plt.subplots(
         len(states),
         4,
-        figsize=grid_figsize(
-            len(states),
-            4,
-            cell_width=3.5,
-            cell_height=3.2,
-        ),
+        figsize=grid_figsize(len(states), 4),
         squeeze=False,
     )
     for row, state in enumerate(states):
@@ -602,17 +580,17 @@ with style_context("thesis", palette="bing"):
 # Every Coulomb LFC considered here has
 # :math:`G(k)=a k^2+O(k^4)`.  Consequently all models share the leading
 # :math:`\chi_{ee}(k)=-k^2/(4\pi)+O(k^4)`, so the response curves overlap.
-# The LFC part of the potential nevertheless has the finite limit
+# The LFC-dependent part of the potential nevertheless has the finite limit
 #
 # .. math::
 #
 #    V_{\rm LFC}(k)=\frac{4\pi}{k^2}G(k)q(k)^2
 #       \longrightarrow 4\pi a\bar Z^2.
 #
-# The panels below show the cold-state response both before and after this
-# inverse-response amplification.  ``common`` is
-# :math:`V_{\rm charge}+V_{\chi_0}` and is independent of the LFC model in
-# this controlled comparison.
+# The panels below show the cold-state response, the LFC contribution, and
+# the resulting total potential.  The remaining terms are identical for all
+# branches because :math:`q(k)`, :math:`\bar Z`, and :math:`\chi_0(k)` are
+# held fixed.
 
 with style_context("thesis", palette="bing"):
     colors = dict(
@@ -621,18 +599,18 @@ with style_context("thesis", palette="bing"):
     fig_low_k, low_k_axes = plt.subplots(
         2,
         2,
-        figsize=grid_figsize(
-            2,
-            2,
-            cell_width=5.0,
-            cell_height=3.4,
-        ),
+        figsize=grid_figsize(2, 2),
         squeeze=False,
     )
     low_k_mask = cold_k <= LOW_K_PLOT_MAX_BOHR_INV
-    common = np.asarray(cold_low_k["common"], dtype=float)
-    if not np.allclose(common, common[reference_index], rtol=1.0e-12, atol=1.0e-10):
-        raise RuntimeError("Expected a shared low-k charge/chi0 background.")
+    shared_non_lfc = np.asarray(cold_low_k["shared_non_lfc"], dtype=float)
+    if not np.allclose(
+        shared_non_lfc,
+        shared_non_lfc[reference_index],
+        rtol=1.0e-12,
+        atol=1.0e-10,
+    ):
+        raise RuntimeError("Expected a shared low-k charge/chi0 term.")
     for model_index, model in enumerate(model_labels):
         label = MODEL_LABELS[model]
         color = colors[model]
@@ -668,31 +646,23 @@ with style_context("thesis", palette="bing"):
             cold_vii[model_index, low_k_mask],
             **plot_options,
         )
-    low_k_axes[1, 1].plot(
-        cold_k[low_k_mask],
-        common[reference_index, low_k_mask],
-        color="0.25",
-        ls=":",
-        lw=1.8,
-        label=r"common $V_{\rm charge}+V_{\chi_0}$",
-    )
     low_k_axes[0, 0].set(
         ylabel=r"$\chi_{ee}$ [Bohr$^{-3}$ Ha$^{-1}$]",
-        title=r"Responses overlap as $k\rightarrow0$",
+        title=r"Interacting response $\chi_{ee}(k)$",
     )
     low_k_axes[0, 1].set(
-        ylabel=r"$100[\chi_{ee}/\chi_{ee}^{\rm C90}-1]$ [\%]",
-        title="Small relative response differences",
+        ylabel=r"relative $\chi_{ee}$ difference [%]",
+        title="Relative difference from Chabrier-1990",
     )
     low_k_axes[1, 0].set(
         xlabel=r"$k$ [Bohr$^{-1}$]",
         ylabel=r"$V_{\rm LFC}$ [Ha Bohr$^3$]",
-        title=r"Finite $4\pi Gq^2/k^2$ contribution",
+        title=r"LFC term in $V_{ii}(k)$",
     )
     low_k_axes[1, 1].set(
         xlabel=r"$k$ [Bohr$^{-1}$]",
         ylabel=r"$V_{ii}$ [Ha Bohr$^3$]",
-        title="Resulting effective potential",
+        title=r"Total $V_{ii}(k)$",
     )
     for axis in low_k_axes.flat:
         axis.set_xlim(0.0, LOW_K_PLOT_MAX_BOHR_INV)
@@ -702,16 +672,17 @@ with style_context("thesis", palette="bing"):
         handles,
         labels,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.945),
-        ncol=6,
+        bbox_to_anchor=(0.5, 0.94),
+        ncol=3,
         frameon=False,
     )
     fig_low_k.suptitle(
         rf"C, $\rho={RHO_G_CC:g}$ g cm$^{{-3}}$, "
-        rf"$T={float(cold_state['temperature_ev']):g}$ eV: low-$k$ LFC audit",
+        rf"$T={float(cold_state['temperature_ev']):g}$ eV: "
+        r"small-$k$ LFC decomposition",
         y=0.99,
     )
-    fig_low_k.tight_layout(rect=(0.0, 0.0, 1.0, 0.91))
+    fig_low_k.tight_layout(rect=(0.0, 0.0, 1.0, 0.85))
     save_figure(
         fig_low_k,
         FIGURE_DIR / "carbon_lfc_low_k_audit",
@@ -731,12 +702,7 @@ with style_context("thesis", palette="bing"):
     fig_ionic, ionic_axes = plt.subplots(
         len(states),
         2,
-        figsize=grid_figsize(
-            len(states),
-            2,
-            cell_width=5.0,
-            cell_height=3.2,
-        ),
+        figsize=grid_figsize(len(states), 2),
         squeeze=False,
     )
     for row, state in enumerate(states):

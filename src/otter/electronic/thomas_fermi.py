@@ -18,6 +18,7 @@ import warnings
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -285,6 +286,8 @@ class ThomasFermiConfig(CitationMixin):
     ion_cut_c: float = 0.05
     quadrature_order: int = 160
     show_progress: bool = False
+    debug: bool = False
+    # ``verbose`` is retained as a compatibility alias for ``debug``.
     verbose: bool = False
     v_full_init: np.ndarray | None = None
     v_full_init_r: np.ndarray | None = None
@@ -731,14 +734,17 @@ def _solve_full(
                 "mix": float(cfg.mix),
             }
         )
-        if cfg.show_progress or cfg.verbose:
+        if cfg.show_progress or cfg.debug or cfg.verbose:
             if iteration == 0 or (iteration + 1) % 10 == 0:
-                print(
-                    "[TF-full] "
-                    f"iter={iteration + 1} err={error:.3e} "
-                    f"dn={dn_rel:.3e} mu={mu:.8f} Ha "
-                    f"Qws-Z={charge_error:.3e}"
-                )
+                if cfg.debug or cfg.verbose:
+                    print(
+                        "[TF-full] "
+                        f"iter={iteration + 1} err={error:.3e} "
+                        f"dn={dn_rel:.3e} mu={mu:.8f} Ha "
+                        f"Qws-Z={charge_error:.3e}"
+                    )
+                else:
+                    print(f"  {iteration + 1:4d} | {dn_rel:9.3e} | {error:9.3e}")
         if (
             error <= coarse_tol
             and (not np.isfinite(dn_rel) or dn_rel <= 5.0 * coarse_tol)
@@ -938,13 +944,16 @@ def _solve_external(
                 "mix": float(cfg.mix),
             }
         )
-        if cfg.show_progress or cfg.verbose:
+        if cfg.show_progress or cfg.debug or cfg.verbose:
             if iteration == 0 or (iteration + 1) % 10 == 0:
-                print(
-                    "[TF-ext] "
-                    f"iter={iteration + 1} err={error:.3e} "
-                    f"dn={dn_rel:.3e}"
-                )
+                if cfg.debug or cfg.verbose:
+                    print(
+                        "[TF-ext] "
+                        f"iter={iteration + 1} err={error:.3e} "
+                        f"dn={dn_rel:.3e}"
+                    )
+                else:
+                    print(f"  {iteration + 1:4d} | {dn_rel:9.3e} | {error:9.3e}")
         if error <= coarse_tol and (
             not np.isfinite(dn_rel) or dn_rel <= 5.0 * coarse_tol
         ):
@@ -1037,6 +1046,8 @@ def solve_thomas_fermi_full_then_external(
     sharp step in Eqs. (4)/(7), and ``V_Ie^C`` from Eqs. (19)/(20) is added to
     both maps.
     """
+    started = time.perf_counter()
+    report = bool(cfg.show_progress or cfg.debug or cfg.verbose)
     if float(cfg.temperature_ev) <= 0.0:
         raise ValueError("Thomas-Fermi solver requires temperature_ev > 0.")
     run_mode = str(cfg.run_mode).strip().lower()
@@ -1057,6 +1068,16 @@ def solve_thomas_fermi_full_then_external(
         r=r,
         r_ws=r_ws,
     )
+    if report:
+        print(
+            f"[AA/TF] {elem.symbol} (Z={int(elem.z)})  "
+            f"Te={float(cfg.temperature_ev):g} eV  "
+            f"rho={float(cfg.rho_g_cc):g} g/cc  "
+            f"Rws={float(r_ws):.6f} Bohr  run_mode={run_mode}"
+        )
+        if not (cfg.debug or cfg.verbose):
+            print("[AA/TF full SCF]")
+            print("  iter |       d_n |       d_v")
 
     n_full, v_full, mu, n0, history, full_converged = _solve_full(
         cfg,
@@ -1072,6 +1093,9 @@ def solve_thomas_fermi_full_then_external(
     )
     do_external = run_mode in {"full+ext", "full_ext"}
     if do_external:
+        if report and not (cfg.debug or cfg.verbose):
+            print("[AA/TF external SCF]")
+            print("  iter |       d_n |       d_v")
         n_ext, v_ext, ext_history, ext_converged = _solve_external(
             cfg,
             r=r,
@@ -1286,6 +1310,17 @@ def solve_thomas_fermi_full_then_external(
         },
         "meta": meta,
     }
+    elapsed = time.perf_counter() - started
+    result["runtime_s"] = float(elapsed)
+    result["meta"]["runtime_s"] = float(elapsed)
+    if report:
+        print(
+            "[AA/TF] "
+            f"converged={bool(result.get('converged', False))}  "
+            f"mu={float(result.get('mu', np.nan)):.8f} Ha  "
+            f"Zbar={float(result.get('zbar', np.nan)):.8f}  "
+            f"time={elapsed:.3f} s"
+        )
     if bool(cfg.save_data):
         result["saved_paths"] = save_full_external_data(
             output_dir=cfg.save_output_dir,

@@ -2,7 +2,7 @@
   "schema_version": "otter_benchmark_manifest_v1",
   "benchmark_id": "argha_roy_carbon_sii",
   "title": "Current Otter carbon Sii calculations against DFT-MD data provided by Dr. Argha Roy",
-  "status": "accepted_current_otter_all_displayed_states",
+  "status": "accepted",
   "data_rights": {
     "baseline_origin_type": "project_generated_numerical_output",
     "reference_data_in_separate_package": true,
@@ -17,8 +17,10 @@
     "git_commit": "f47610cb802699e108248fa7fc138e7cbede282e",
     "worktree_dirty": true,
     "script_sha256_at_calculation": "54d58decedd1fbed436638a7ba50a0cb3389167b6c0eafc802e57582679756bf",
-    "current_controller_sha256": "2278f3ed2012c212f9891490b056772605e6a97677a53225bd75f13f9a025b84",
-    "note": "All five displayed PA-HNC curves were computed with Otter and passed the AA stage-2, external-AA, threshold-state, HNC fixed-point, and transform-closure gates."
+    "current_controller_sha256": "abb6727ce214e1e860c58c59928f6dd49fc76564086d57c30a8d55f732c36fc1",
+    "note": "All five displayed PA-HNC curves were computed with Otter and passed the AA stage-2, external-AA, threshold-state, HNC fixed-point, and transform-closure gates.",
+    "script_sha256_current": "abb6727ce214e1e860c58c59928f6dd49fc76564086d57c30a8d55f732c36fc1",
+    "script_sha256_at_generation": "abb6727ce214e1e860c58c59928f6dd49fc76564086d57c30a8d55f732c36fc1"
   },
   "configuration": {
     "electronic_model": "qm",
@@ -62,7 +64,10 @@
       "threshold_state_status": "resolved",
       "threshold_state_representation": "zero_tail_matched",
       "baseline_file": "c_rho3p51538_te020_ti020.npz",
-      "baseline_sha256": "14fcb1ff4b81ef2c68c2fdac7875ddcf4381695c9d36b698a87acb0823dfc484"
+      "baseline_sha256": "78ae278578895c3c390915d08d9804afb2698b41e8d16f5623c5e9fb04d68150",
+      "zbar_partition": 3.9956983689667087,
+      "hnc_output_residual": 7.065711214816942e-05,
+      "closure_transform_max_abs": 0.0013702671261922594
     },
     {
       "state_id": "c_rho3p51538_te030_ti030",
@@ -74,7 +79,10 @@
       "threshold_state_status": "resolved",
       "threshold_state_representation": "zero_tail_matched",
       "baseline_file": "c_rho3p51538_te030_ti030.npz",
-      "baseline_sha256": "a2b2dd7d46454107ab4344218af53ab8eb6ae1a89e5b06254521b011c768a9e4"
+      "baseline_sha256": "d4e3cc88ffc833d8fd2d8571868a6dfdc8dc11f69c660ddc193b3a28e9080959",
+      "zbar_partition": 3.994861007583446,
+      "hnc_output_residual": 1.704011269449967e-05,
+      "closure_transform_max_abs": 0.0001338485995624472
     },
     {
       "state_id": "c_rho3p51538_te040_ti040",
@@ -86,7 +94,10 @@
       "threshold_state_status": "resolved",
       "threshold_state_representation": "zero_tail_matched",
       "baseline_file": "c_rho3p51538_te040_ti040.npz",
-      "baseline_sha256": "60a82e4fb00216f135e85c84387814f2cc1cd4f4183df3d813776a1a7dc6eeea"
+      "baseline_sha256": "1d57fce5cc79b0c1d56a488947ecddfe4f99095c3fe0e1339e81d29168be46fe",
+      "zbar_partition": 4.000683431350434,
+      "hnc_output_residual": 4.024246470331396e-06,
+      "closure_transform_max_abs": 1.1749009842243474e-05
     },
     {
       "state_id": "c_rho3p51538_te050_ti050",
@@ -95,10 +106,13 @@
       "te_ev": 50.0,
       "ti_ev": 50.0,
       "status": "accepted",
-      "threshold_state_status": "resolved",
-      "threshold_state_representation": "zero_tail_matched",
+      "threshold_state_status": "marginal",
+      "threshold_state_representation": "finite_dirichlet_box",
       "baseline_file": "c_rho3p51538_te050_ti050.npz",
-      "baseline_sha256": "9651c91f84528f3a3aaece5c5a12e2906249f5ac0002f8b56608edeb410c968a"
+      "baseline_sha256": "63088749c56f5324310c2ec97c0066b2afaa3b575f15c78252931d24dc79859a",
+      "zbar_partition": 4.027907548314509,
+      "hnc_output_residual": 5.636275003196095e-06,
+      "closure_transform_max_abs": 4.6819844392920196e-05
     },
     {
       "state_id": "c_rho3p51538_te100_ti100",
@@ -110,7 +124,10 @@
       "threshold_state_status": "resolved",
       "threshold_state_representation": "finite_dirichlet_box",
       "baseline_file": "c_rho3p51538_te100_ti100.npz",
-      "baseline_sha256": "23c29dd8d67c94e089ba8bfead726b99fdbdd1cc4edbd34aa79ff3cadc9da175"
+      "baseline_sha256": "2d9f371b1b053d5037f31127295fe2b2c9948b26d2fdf8cbac7991692d659c63",
+      "zbar_partition": 4.492476599774806,
+      "hnc_output_residual": 1.392599406711526e-06,
+      "closure_transform_max_abs": 1.2868556128808883e-05
     }
   ]
 }

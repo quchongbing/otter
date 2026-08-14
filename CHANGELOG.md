@@ -5,6 +5,15 @@ have not yet been released are collected under “Unreleased”.
 
 ## Unreleased
 
+## 0.2.1 - 2026-08-14
+
+### Added
+
+- Expanded ``otter_state_v3`` archives with electronic profiles, orbital
+  densities, response functions, QOZ interaction channels, pair potentials,
+  structure factors, and calculation metadata.
+- Added a Colab introduction and optional Libxc installation extra.
+
 ### Changed
 
 - Added a Poetry lock file and one cross-platform `poetry install` path with
@@ -16,6 +25,12 @@ have not yet been released are collected under “Unreleased”.
   production defaults directly.
 - Kept the top-level examples focused on single-species and mixture workflows;
   numerical diagnostics and model studies now live under ``tools``.
+- Stabilized mixture roots near pressure ionization and preserved validated
+  external-density tails through the final electronic solve.
+- Recomputed and promoted all accepted example and benchmark NPZ baselines
+  with field inventories and provenance metadata.
+- Simplified the software citation and refreshed the example and benchmark
+  documentation.
 
 ## 0.2.0 - 2026-08-10
 

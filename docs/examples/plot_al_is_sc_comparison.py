@@ -27,6 +27,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -53,6 +54,8 @@ from otter.plotting import (
 # either worker count on a small machine.
 
 RECOMPUTE_WITH_OTTER = False
+if os.environ.get("OTTER_RECOMPUTE_AL_IS_SC", "0") == "1":
+    RECOMPUTE_WITH_OTTER = True
 RECOMPUTE_MODEL_WORKERS = 2
 CONTINUUM_WORKERS = 8
 
@@ -64,8 +67,6 @@ MODELS = ("qm", "tf")
 MODEL_DISPLAY_LABELS = ("KS-DFT", "Thomas--Fermi")
 STRUCTURES = ("is", "sc")
 
-AA_N_POINTS = 1024
-QOZ_N_POINTS = 1024
 HNC_TOL = 1.0e-4
 HNC_CLOSURE_TOL = 2.5e-3
 R_RETAIN_MAX_BOHR = 20.0
@@ -133,26 +134,11 @@ def workflow_config(model: str) -> PlasmaWorkflowConfig:
         rho_g_cc=RHO_G_CC,
         electronic_model=model_key,
         aa_overrides={
-            "n_points": AA_N_POINTS,
             "cont_n_jobs": CONTINUUM_WORKERS,
             "cont_shards": 2 * CONTINUUM_WORKERS,
-            "bound_occ_mode": "fd",
-            # No enlarged bound-state box is used in this example.
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_model": "full",
         },
-        qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=500,
-        hnc_require_converged=True,
-        show_progress=False,
     )
 
 
@@ -582,7 +568,7 @@ with style_context("thesis", palette="bing"):
     fig_structure, axes = plt.subplots(
         2,
         2,
-        figsize=grid_figsize(2, 2, cell_width=5.1, cell_height=3.25),
+        figsize=grid_figsize(2, 2),
         sharex="col",
     )
     for model_index, model_name in enumerate(model_names):
@@ -679,7 +665,7 @@ with style_context("thesis", palette="bing"):
     fig_levels, level_axes = plt.subplots(
         1,
         2,
-        figsize=grid_figsize(1, 2, cell_width=4.7, cell_height=3.7),
+        figsize=grid_figsize(1, 2),
     )
     _draw_level_paths(
         level_axes[0],
@@ -719,14 +705,14 @@ with style_context("thesis", palette="bing"):
     fig_convergence, (ax_time, ax_history) = plt.subplots(
         1,
         2,
-        figsize=grid_figsize(1, 2, cell_width=5.0, cell_height=3.9),
+        figsize=grid_figsize(1, 2),
     )
     for offset, values, label, color in (
         (-0.5 * width, is_time, "IS", PALETTES["bing"][1]),
         (
             0.5 * width,
             sc_extension_time,
-            "SC extension",
+            "SC",
             PALETTES["bing"][2],
         ),
     ):

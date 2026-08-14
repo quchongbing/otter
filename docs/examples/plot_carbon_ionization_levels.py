@@ -51,16 +51,15 @@ shown in the plot are :math:`E_{nl}-E_{\mathrm{cut}}`.
 
 For context, the ionization figure overlays the model-dependent
 :math:`Z^{\mathrm{free}}` curves digitized from Fig. 3(a) of
-:cite:t:`BethkenhagenEtAl2020`.  Those quantities are not identified with
-either Otter :math:`\bar{Z}` or :math:`Z^*`; they are displayed only as a
-definition-aware comparison.
+:cite:t:`BethkenhagenEtAl2020`.  They use different electron partitions and
+are not equivalent to either Otter :math:`\bar{Z}` or :math:`Z^*`.
 
-The default verifies and loads a checksummed 4096-point Otter scan.  Set
-``RECOMPUTE_WITH_OTTER = True`` to calculate the requested densities.  New
-files are staged under ``benchmarks/outputs`` and do not overwrite accepted
-data.  States that fail the SCF or threshold-state checks are recorded as
-failures rather than plotted as physical results.  Both figures are exported
-as PNG and PDF.
+The default verifies and loads a checksummed 4096-point Otter scan.  If the
+requested density grid contains new points, Otter reuses the accepted states
+and calculates only the missing densities.  New files are staged under
+``benchmarks/outputs`` and do not overwrite accepted data.  States that fail
+the SCF or threshold-state checks are recorded as failures rather than plotted
+as physical results.  Both figures are exported as PNG and PDF.
 
 """
 from __future__ import annotations
@@ -87,17 +86,18 @@ from otter.plotting import PALETTES, grid_figsize, save_figure, style_context
 # reuse below ensures that only densities absent from the accepted scan/cache
 # are calculated.
 RECOMPUTE_WITH_OTTER = False
-USE_PRECOMPUTED_DATA = not RECOMPUTE_WITH_OTTER
+if os.environ.get("OTTER_RECOMPUTE_CARBON_IONIZATION", "0") == "1":
+    RECOMPUTE_WITH_OTTER = True
 RETRY_NONCONVERGED_POINTS = (
     os.environ.get("OTTER_RETRY_NONCONVERGED_CARBON_IONIZATION", "0") == "1"
 )
 
 ELEMENT = "C"
 TEMPERATURE_EV = 100.0
-# This explicit grid is identical to the checksummed accepted 72-state scan.
-# It is deliberately denser from 0.1--6 g cm^-3, where shallow-state branches
-# change rapidly.  The points diagnose finite-grid level disappearance; they
-# do not assert exact pressure-ionization densities.
+# This user-editable grid is deliberately denser where shallow-state branches
+# change rapidly.  Points already present in the accepted scan are reused;
+# only newly requested densities are calculated.  The grid diagnoses
+# finite-grid level disappearance rather than an exact ionization threshold.
 DENSITIES_G_CC = np.asarray(
     (
         0.10,
@@ -114,6 +114,8 @@ DENSITIES_G_CC = np.asarray(
         0.65,
         0.70,
         0.75,
+        0.80,
+        0.90,
         1.00,
         1.05,
         1.10,
@@ -168,17 +170,23 @@ DENSITIES_G_CC = np.asarray(
         50.0,
         75.0,
         100.0,
+        116.0,
+        136.0,
+        150.0,
+        185.0,
         200.0,
+        216.0,
+        250.0,
+        270.0,
         300.0,
+        320.0,
+        350.0,
+        370.0,
         400.0,
         450.0,
     ),
     dtype=float,
 )
-
-# No release-only density is requested beyond the accepted scan.  A developer
-# can add points here and enable RECOMPUTE_WITH_OTTER to stage new candidates.
-NEW_DENSITIES_G_CC = np.asarray((), dtype=float)
 
 # Two independent AA states, each with four continuum workers, use eight
 # explicit workers.  This is faster than a sequential scan without the large
@@ -188,7 +196,9 @@ CONTINUUM_WORKERS_PER_STATE = 2
 # Incremental extension is the normal workflow: reuse every requested point
 # already present in the checksummed accepted scan, then calculate only new
 # densities.  Set this to False only to force an independent full scan.
-REUSE_ACCEPTED_POINTS_WHEN_RECOMPUTING = True
+REUSE_ACCEPTED_POINTS_WHEN_RECOMPUTING = (
+    os.environ.get("OTTER_REUSE_ACCEPTED_CARBON_IONIZATION", "1") == "1"
+)
 AA_N_POINTS = 2**12
 BOUND_ENERGY_CUT_MODE = "v_frac"
 BOUND_ENERGY_CUT_VALUE = 0.70
@@ -198,6 +208,12 @@ LEGACY_BASELINE_SCHEMAS = {
     "otter_carbon_ionization_levels_v1",
     "otter_carbon_ionization_levels_v2",
 }
+
+
+class DensityGridMismatchError(RuntimeError):
+    """The requested density grid differs from the accepted archive."""
+
+
 HARTREE_TO_EV = 27.211386245988
 ORBITAL_LETTERS = ("s", "p", "d", "f", "g", "h")
 DISPLAYED_SHELLS = ("1s", "2s", "2p", "3s", "3p", "3d")
@@ -285,18 +301,11 @@ def _configuration(rho_g_cc: float) -> FullExternalConfig:
         temperature_ev=float(TEMPERATURE_EV),
         rho_g_cc=float(rho_g_cc),
         run_mode="full",
-        n_points=int(AA_N_POINTS),
         # Retain headroom on the steep high-density ionization branch.  The
         # convergence criterion itself is unchanged.
         stage2_max_iter=180,
         cont_n_jobs=int(CONTINUUM_WORKERS_PER_STATE),
         cont_shards=int(2 * CONTINUUM_WORKERS_PER_STATE),
-        show_scf_progress=False,
-        save_data=False,
-        bound_occ_mode="fd",
-        bound_rmax_mult=None,
-        bound_energy_cut_mode=BOUND_ENERGY_CUT_MODE,
-        bound_energy_cut=BOUND_ENERGY_CUT_VALUE,
         # Match a shallow negative-energy orbital at the common outer SCF
         # boundary, with no separate enlarged bound-only box.  This optional
         # numerical refinement is motivated by the exterior matching in
@@ -307,7 +316,6 @@ def _configuration(rho_g_cc: float) -> FullExternalConfig:
         bound_zero_tail_scan_points=64,
         bound_zero_tail_l_max=1,
         bound_zero_tail_edge_rel_tol=0.1,
-        b3_tail_model="full",
     )
 
 
@@ -1146,7 +1154,7 @@ def _load_precomputed() -> dict[str, np.ndarray]:
     if not BASELINE_PATH.is_file() or not BASELINE_MANIFEST.is_file():
         raise FileNotFoundError(
             "The checksummed carbon-ionization gallery state is not installed. "
-            "Set USE_PRECOMPUTED_DATA=False and RECOMPUTE_WITH_OTTER=True."
+            "Run with RECOMPUTE_WITH_OTTER=True to calculate it."
         )
     manifest = json.loads(BASELINE_MANIFEST.read_text(encoding="utf-8"))
     if (
@@ -1171,12 +1179,9 @@ def _load_precomputed() -> dict[str, np.ndarray]:
         rtol=0.0,
         atol=0.0,
     ):
-        raise RuntimeError(
-            "The accepted carbon-ionization baseline uses an older density "
-            f"grid ({stored_rho.size} states), while this producer requests "
-            f"{requested_rho.size} states. Set "
-            "OTTER_RECOMPUTE_CARBON_IONIZATION=1 to extend it incrementally "
-            "from the accepted 4096-point states."
+        raise DensityGridMismatchError(
+            "The requested density grid differs from the accepted "
+            f"{stored_rho.size}-state grid."
         )
     _validate_state(state)
     return state
@@ -1245,7 +1250,7 @@ def _plot(state: dict[str, np.ndarray]) -> None:
         fig_ionization, (ax_z, ax_mu) = plt.subplots(
             1,
             2,
-            figsize=grid_figsize(1, 2, cell_width=4.6, cell_height=3.6),
+            figsize=grid_figsize(1, 2),
         )
         published_styles = {
             "DFT-MD": (colors[2], ":", "o"),
@@ -1336,7 +1341,7 @@ def _plot(state: dict[str, np.ndarray]) -> None:
         fig_levels, (ax_core, ax_outer) = plt.subplots(
             1,
             2,
-            figsize=grid_figsize(1, 2, cell_width=4.8, cell_height=3.8),
+            figsize=grid_figsize(1, 2),
         )
         core_indices = [
             index for index, label in enumerate(labels) if label == "1s"
@@ -1395,7 +1400,7 @@ def _plot(state: dict[str, np.ndarray]) -> None:
             else:
                 ion_charge_axis.set_ylim(bottom=0.0)
 
-            axis.set_ylabel("level energy [eV]", labelpad=2)
+            axis.set_ylabel("energy [eV]", labelpad=2)
             ion_charge_axis.set_ylabel(
                 r"$Q^{\rm ion}_{nl}$ [e]",
                 color="0.25",
@@ -1442,9 +1447,7 @@ def _plot(state: dict[str, np.ndarray]) -> None:
                 color="0.35",
             )
         fig_levels.suptitle(
-            r"Carbon orbital levels at $T_e=100$ eV"
-            "\nsolid: energy relative to continuum; dashed: "
-            r"$Q^{\rm ion}_{nl}(R_{\rm WS})$",
+            r"Carbon orbital levels at $T_e=100$ eV",
             y=0.985,
         )
         fig_levels.tight_layout(rect=(0.0, 0.0, 1.0, 0.925))
@@ -1452,39 +1455,43 @@ def _plot(state: dict[str, np.ndarray]) -> None:
             fig_levels,
             FIGURE_DIR / "carbon_bound_levels_100ev",
         )
-    #if "agg" not in plt.get_backend().lower():
+    if "agg" not in plt.get_backend().lower():
         plt.show()
 
 
+def _compute_and_stage() -> dict[str, np.ndarray]:
+    """Assemble the requested grid and stage it without changing baseline."""
+    state = _compute_scan()
+    path = _save_candidate(state)
+    point_source = np.asarray(state["point_source"], dtype=str)
+    accepted_count = int(
+        np.count_nonzero(point_source == "accepted_baseline_seed")
+    )
+    added_count = int(point_source.size - accepted_count)
+    failed_count = int(np.asarray(state["failed_rho_g_cc"]).size)
+    print(
+        f"Using incrementally assembled Otter data staged at {path}: "
+        f"reused {accepted_count} accepted states; added {added_count} "
+        f"cached or newly calculated states; retained {failed_count} "
+        "nonconverged audit record(s)."
+    )
+    return state
+
+
 def main() -> None:
-    if bool(USE_PRECOMPUTED_DATA) == bool(RECOMPUTE_WITH_OTTER):
-        raise ValueError(
-            "Select exactly one data path: set one of USE_PRECOMPUTED_DATA "
-            "and RECOMPUTE_WITH_OTTER to True."
-        )
     if RECOMPUTE_WITH_OTTER:
-        state = _compute_scan()
-        path = _save_candidate(state)
-        point_source = np.asarray(state["point_source"], dtype=str)
-        accepted_count = int(
-            np.count_nonzero(point_source == "accepted_baseline_seed")
-        )
-        fresh_count = int(
-            np.count_nonzero(point_source == "fresh_otter_solve")
-        )
-        failed_count = int(np.asarray(state["failed_rho_g_cc"]).size)
-        print(
-            f"Using incrementally assembled Otter data staged at {path}: "
-            f"reused {accepted_count} accepted states; calculated "
-            f"{fresh_count} new states; retained {failed_count} "
-            "nonconverged audit record(s)."
-        )
+        state = _compute_and_stage()
     else:
-        state = _load_precomputed()
-        print(
-            "Using checksummed Otter data from "
-            f"{BASELINE_PATH.relative_to(ROOT)}."
-        )
+        try:
+            state = _load_precomputed()
+        except DensityGridMismatchError as error:
+            print(f"{error} Extending it incrementally.")
+            state = _compute_and_stage()
+        else:
+            print(
+                "Using checksummed Otter data from "
+                f"{BASELINE_PATH.relative_to(ROOT)}."
+            )
     _print_state_table(state)
     _plot(state)
 

@@ -35,7 +35,6 @@ STATE = {
     "te_ev": 1.0,
     "ti_ev": 1.0,
 }
-QOZ_N_POINTS = 4096
 HNC_TOL = 1.0e-6
 HNC_CLOSURE_TOL = 1.0e-3
 HNC_MAX_ITER = 1000
@@ -101,7 +100,6 @@ def _configuration(producer: ModuleType):
     same equations to a tighter fixed point; no physical model is changed.
     """
     cfg = producer._configuration(STATE)
-    cfg.qoz_linear_n_points = int(QOZ_N_POINTS)
     cfg.hnc_tol = float(HNC_TOL)
     cfg.hnc_closure_transform_tol = float(HNC_CLOSURE_TOL)
     cfg.hnc_max_iter = int(HNC_MAX_ITER)
@@ -111,8 +109,9 @@ def _configuration(producer: ModuleType):
 def _augment_v2_payload(
     payload: dict[str, np.ndarray],
     portable: dict[str, np.ndarray],
+    workflow: dict[str, Any] | None = None,
 ) -> dict[str, np.ndarray]:
-    """Add the explicit ``f(k)=n_ion(k)`` channel on the native QOZ grid."""
+    """Add explicit ion and raw/charge-closed screening form factors."""
     output = dict(payload)
     payload_k = np.asarray(output["k_bohr_inv"], dtype=float)
     portable_k = np.asarray(portable["k_bohr_inv"], dtype=float)
@@ -132,6 +131,15 @@ def _augment_v2_payload(
     output["schema_version"] = np.asarray("otter_al_full_workflow_v2")
     output["benchmark_id"] = np.asarray("al_full_workflow_1ev")
     output["n_ion_k_electrons"] = n_ion_k[0]
+    if workflow is not None:
+        charge_fix = dict(workflow["ion"]["charge_fix"])
+        q_scale = float(charge_fix["scale_factor"])
+        q_used = np.asarray(portable["n_scr_k"], dtype=float)[0]
+        output["q_scr_grid_raw"] = np.asarray(float(charge_fix["q_scr_raw"]))
+        output["q_scr_used"] = np.asarray(float(charge_fix["q_scr_used"]))
+        output["q_scr_scale_factor"] = np.asarray(q_scale)
+        output["n_scr_k_electrons"] = q_used
+        output["n_scr_k_raw_electrons"] = q_used / q_scale
     return output
 
 
@@ -139,6 +147,7 @@ def _candidate_manifest(
     output_path: Path,
     *,
     worktree_status: str,
+    payload: dict[str, np.ndarray] | None = None,
 ) -> dict[str, Any]:
     """Describe a review-only v2 result without claiming it is accepted."""
     script = Path(__file__).resolve()
@@ -148,7 +157,7 @@ def _candidate_manifest(
         / "runners"
         / "regenerate_ion_structure_library.py"
     )
-    return {
+    manifest: dict[str, Any] = {
         "schema_version": "otter_benchmark_manifest_v1",
         "benchmark_id": "al_full_workflow_1ev",
         "status": "candidate_not_accepted",
@@ -213,7 +222,9 @@ def _candidate_manifest(
             "b3_tail_model": "full",
             "chi0_model": "lindhard_fd",
             "lfc_model": "chabrier1990",
-            "qoz_n_points_before_padding": QOZ_N_POINTS,
+            "qoz_n_points_before_padding": 4096,
+            "qoz_zbar_mode": "pseudoatom_partition",
+            "qoz_renormalize_nscr_to_zbar": True,
             "hnc_tolerance": HNC_TOL,
             "hnc_transform_closure_tolerance": HNC_CLOSURE_TOL,
             "hnc_max_iterations": HNC_MAX_ITER,
@@ -226,6 +237,19 @@ def _candidate_manifest(
             "data_sha256": _sha256(output_path),
         },
     }
+    if payload is not None:
+        manifest["scientific_audit"] = {
+            "zbar_aa_ws": float(payload["zbar_aa"]),
+            "zbar_partition": float(payload["zbar_partition"]),
+            "zbar_qoz": float(payload["zbar_qoz"]),
+            "q_scr_native_raw": float(payload["q_scr_raw"]),
+            "q_scr_grid_raw": float(payload["q_scr_grid_raw"]),
+            "q_scr_used": float(payload["q_scr_used"]),
+            "q_scr_scale_factor": float(payload["q_scr_scale_factor"]),
+            "hnc_best_residual": float(payload["hnc_best_residual"]),
+            "hnc_closure_mismatch": float(payload["hnc_closure_mismatch"]),
+        }
+    return manifest
 
 
 def regenerate(*, output_path: Path = OUTPUT_PATH) -> Path:
@@ -248,7 +272,7 @@ def regenerate(*, output_path: Path = OUTPUT_PATH) -> Path:
             k_max_bohr_inv=20.0,
         ),
     )
-    payload = _augment_v2_payload(payload, portable)
+    payload = _augment_v2_payload(payload, portable, result)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output_path, **payload)
     manifest_path = output_path.parent / "manifest.json"
@@ -257,6 +281,7 @@ def regenerate(*, output_path: Path = OUTPUT_PATH) -> Path:
             _candidate_manifest(
                 output_path,
                 worktree_status=worktree_status,
+                payload=payload,
             ),
             indent=2,
         )

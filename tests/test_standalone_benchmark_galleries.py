@@ -10,10 +10,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 GALLERIES = (
-    ROOT
-    / "benchmarks"
-    / "examples"
-    / "plot_bethkenhagen_et_al_2020_carbon_ionization.py",
     ROOT / "benchmarks" / "examples" / "plot_ion_structure_library.py",
     ROOT
     / "benchmarks"
@@ -62,3 +58,25 @@ def test_benchmark_gallery_is_one_complete_otter_script(path: Path) -> None:
     assert "benchmarks/runners" not in source
     assert "benchmarks\" / \"runners" not in source
     assert "regenerate_" not in source
+
+
+def test_bethkenhagen_benchmark_reuses_the_carbon_ionization_scan() -> None:
+    """The literature overlay must not repeat the 100 eV carbon scan."""
+    path = (
+        ROOT
+        / "benchmarks"
+        / "examples"
+        / "plot_bethkenhagen_et_al_2020_carbon_ionization.py"
+    )
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+
+    assert "carbon_ionization_levels" in source
+    assert "C_Te100eV_density_scan.npz" in source
+    assert "solve_full_only(" not in source
+    assert "solve_plasma_workflow(" not in source
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "otter.plotting"
+        for node in ast.walk(tree)
+    )

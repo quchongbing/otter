@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from otter import PlasmaWorkflowConfig, solve_plasma_workflow
-from otter.plotting import PAIR_COLORS, save_figure, style_context
+from otter.plotting import PAIR_COLORS, grid_figsize, save_figure, style_context
 
 
 # =============================================================================
@@ -55,9 +55,8 @@ EV_PER_K = 8.617333262145e-5
 TE_EV = TEMPERATURE_K * EV_PER_K
 TI_EV = TE_EV
 
-AA_N_POINTS = 4096
-CONTINUUM_WORKERS = 6
-QOZ_N_POINTS = 4096
+CONTINUUM_WORKERS = int(os.environ.get("OTTER_CONTINUUM_WORKERS", "6"))
+CONTINUUM_SHARDS = 32
 COMMON_MU_TOL_HA = 1.0e-4
 HNC_TOL = 1.0e-5
 HNC_CLOSURE_TOL = 1.0e-4
@@ -115,54 +114,20 @@ def workflow_config() -> PlasmaWorkflowConfig:
         temperature_ev=TE_EV,
         ion_temperature_ev=TI_EV,
         rho_g_cc=RHO_G_CC,
-        electronic_model="qm",
-        run_mode="full+ext",
         aa_overrides={
-            "n_points": AA_N_POINTS,
             "cont_n_jobs": CONTINUUM_WORKERS,
-            "cont_shards": 2 * CONTINUUM_WORKERS,
-            "bound_occ_mode": "fd",
-            # Use the ordinary full-AA radial domain for bound states.
-            "bound_rmax_mult": None,
-            "bound_zero_tail_refine": False,
-            "b3_tail_stage1_mode": "in_scf",
-            "b3_tail_stage2_mode": "in_scf",
-            "ext_b3_tail_mode": "in_scf",
+            "cont_shards": CONTINUUM_SHARDS,
             "b3_tail_target": "full",
-            "b3_tail_model": "full",
-            "b3_tail_fit_window_mode": "local",
-            "b3_tail_local_fit_width_mult": 0.064,
             "b3_r_cut_mult": 3.0,
             "b3_r_fit_max_mult": 4.0,
-            "b3_source_charge_constraint": False,
             "full_b3_use_source_closure": False,
             "ext_b3_use_source_closure": False,
-            "ph_kappa": 0.0,
-            "ph_kappa_iters": 0,
         },
-        mu_e_tol=COMMON_MU_TOL_HA,
-        root_tol=1.0e-4,
         root_maxfev=32,
         root_brent_maxiter=24,
-        root_threshold_b3_surrogate_mode="a_only_when_full_unresolved",
-        allow_unconverged_root=False,
-        allow_unconverged_aa=False,
-        species_parallel_jobs=1,
-        species_parallel_backend="thread",
-        qoz_linear_n_points=QOZ_N_POINTS,
-        qoz_pad_factor=2.0,
-        qoz_zbar_mode="pseudoatom_partition",
-        qoz_renormalize_nscr_to_zbar=True,
-        qoz_response_chi0_model="lindhard_fd",
-        qoz_response_lfc_model="chabrier1990",
-        qoz_high_k_taper_start_frac=0.9,
         hnc_tol=HNC_TOL,
         hnc_closure_transform_tol=HNC_CLOSURE_TOL,
         hnc_max_iter=1000,
-        hnc_require_converged=True,
-        hnc_enforce_nodal_tail_zero=False,
-        hnc_s_projection_mode="none",
-        show_progress=False,
         show_mu_progress=True,
     )
 
@@ -357,7 +322,7 @@ q_k = np.asarray(result["q_k"], dtype=float)
 vij_k = np.asarray(result["vij_k"], dtype=float)
 
 with style_context("thesis", palette="bing"):
-    fig, axes = plt.subplots(2, 2, figsize=(10.2, 7.1))
+    fig, axes = plt.subplots(2, 2, figsize=grid_figsize(2, 2))
     for label, i, j in PAIR_ORDER:
         axes[0, 0].plot(
             r, gij[i, j], color=PAIR_COLORS[label], label=label

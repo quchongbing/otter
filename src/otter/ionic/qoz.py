@@ -126,7 +126,10 @@ class EffectivePotentialResult:
 
     vii_r: np.ndarray
     vii_k: np.ndarray
+    v_ie_k: np.ndarray
+    v_ee_k: np.ndarray
     c_ie_k: np.ndarray
+    c_ee_k: np.ndarray
     chi_ee_k: np.ndarray
     chi0_k: np.ndarray
     gee_k: np.ndarray
@@ -190,7 +193,10 @@ class MultiComponentEffectivePotentialResult:
 
     vij_r: np.ndarray
     vij_k: np.ndarray
+    v_ie_k: np.ndarray
+    v_ee_k: np.ndarray
     c_ie_k: np.ndarray
+    c_ee_k: np.ndarray
     chi_ee_k: np.ndarray
     chi0_k: np.ndarray
     gee_k: np.ndarray
@@ -747,6 +753,54 @@ def chi_ee_from_eq17(
     return chi_ee, chi0, gee
 
 
+def electron_interaction_channels_k(
+    *,
+    k: np.ndarray,
+    n_scr_k: np.ndarray,
+    chi_ee_k: np.ndarray,
+    gee_k: np.ndarray,
+    electron_temperature_ha: float,
+    ion_temperature_ha: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    r"""Return the electron--ion and electron--electron QOZ channels.
+
+    The definitions follow Starrett--Saumon (2014), Eqs. (16)--(18):
+
+    .. math::
+
+       V_{Ie}(k) &= \frac{n_e^{\rm scr}(k)}{\chi_{ee}(k)},
+       &C_{Ie}(k) &= -\beta_i V_{Ie}(k),\\
+       V_{ee}(k) &= \frac{4\pi}{k^2}[1-G_{ee}(k)],
+       &C_{ee}(k) &= -\beta_e V_{ee}(k).
+
+    ``n_scr_k`` may be one-dimensional for a single species or have shape
+    ``(n_species, n_k)`` for a mixture.  The returned ``V_Ie`` and ``C_Ie``
+    preserve that shape; the common electron channels are one-dimensional.
+
+    Returns
+    -------
+    v_ie_k, v_ee_k, c_ie_k, c_ee_k
+        Fourier-space potentials in Hartree Bohr^3 and direct-correlation
+        functions in Bohr^3.
+    """
+    k_arr = np.asarray(k, dtype=float)
+    n_scr_arr = np.asarray(n_scr_k, dtype=float)
+    chi_arr = np.asarray(chi_ee_k, dtype=float)
+    gee_arr = np.asarray(gee_k, dtype=float)
+    if k_arr.ndim != 1 or chi_arr.shape != k_arr.shape or gee_arr.shape != k_arr.shape:
+        raise ValueError("k, chi_ee_k, and gee_k must share one reciprocal grid.")
+    if n_scr_arr.ndim not in (1, 2) or n_scr_arr.shape[-1] != k_arr.size:
+        raise ValueError("n_scr_k must have shape (n_k,) or (n_species, n_k).")
+
+    te_ha = max(float(electron_temperature_ha), 1.0e-12)
+    ti_ha = max(float(ion_temperature_ha), 1.0e-12)
+    c_ee_k = cee_from_gee(k_arr, gee_arr, te_ha)
+    v_ee_k = -te_ha * c_ee_k
+    v_ie_k = n_scr_arr / chi_arr
+    c_ie_k = -v_ie_k / ti_ha
+    return v_ie_k, v_ee_k, c_ie_k, c_ee_k
+
+
 def _stable_effective_pair_potential_k(
     *,
     n_scr_k: np.ndarray,
@@ -890,8 +944,14 @@ def build_effective_vii_from_nscr(
         mu_jellium_ha=mu_jel,
         response_options=opts.response,
     )
-    beta = 1.0 / max(float(ion_temperature_ha), 1e-12)
-    c_ie_k = -beta * n_scr_k / chi_ee
+    v_ie_k, v_ee_k, c_ie_k, c_ee_k = electron_interaction_channels_k(
+        k=np.asarray(k, dtype=float),
+        n_scr_k=n_scr_k,
+        chi_ee_k=chi_ee,
+        gee_k=gee_k,
+        electron_temperature_ha=te_ha,
+        ion_temperature_ha=ion_temperature_ha,
+    )
     vii_k = _stable_effective_pair_potential_k(
         n_scr_k=n_scr_k[np.newaxis, :],
         zbar=np.asarray([zbar], dtype=float),
@@ -909,7 +969,10 @@ def build_effective_vii_from_nscr(
     return EffectivePotentialResult(
         vii_r=vii_r,
         vii_k=vii_k,
+        v_ie_k=v_ie_k,
+        v_ee_k=v_ee_k,
         c_ie_k=c_ie_k,
+        c_ee_k=c_ee_k,
         chi_ee_k=chi_ee,
         chi0_k=chi0_k,
         gee_k=gee_k,
@@ -1013,8 +1076,14 @@ def build_effective_vij_from_nscr(
     for idx in range(n_species):
         n_scr_k[idx] = radial_forward(n_scr_arr[idx], transform)
 
-    beta = 1.0 / max(float(ion_temperature_ha), 1e-12)
-    c_ie_k = -beta * n_scr_k / chi_ee[np.newaxis, :]
+    v_ie_k, v_ee_k, c_ie_k, c_ee_k = electron_interaction_channels_k(
+        k=k_arr,
+        n_scr_k=n_scr_k,
+        chi_ee_k=chi_ee,
+        gee_k=gee_k,
+        electron_temperature_ha=te_ha,
+        ion_temperature_ha=ion_temperature_ha,
+    )
 
     vij_k = _stable_effective_pair_potential_k(
         n_scr_k=n_scr_k,
@@ -1039,7 +1108,10 @@ def build_effective_vij_from_nscr(
     return MultiComponentEffectivePotentialResult(
         vij_r=vij_r,
         vij_k=vij_k,
+        v_ie_k=v_ie_k,
+        v_ee_k=v_ee_k,
         c_ie_k=c_ie_k,
+        c_ee_k=c_ee_k,
         chi_ee_k=chi_ee,
         chi0_k=chi0_k,
         gee_k=gee_k,

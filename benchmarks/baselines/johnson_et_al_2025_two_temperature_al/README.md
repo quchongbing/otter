@@ -1,7 +1,7 @@
 # Otter two-temperature aluminium benchmark baselines
 
-This package contains reviewed, native Otter calculations for the 1, 10, and
-30 eV electron-temperature states in Johnson et al. (2025).  All three passed the
+This package contains reviewed Otter calculations for the 1, 3, 10, and
+30 eV electron-temperature states in Johnson et al. (2025).  All four passed the
 strict full/external average-atom, threshold-state, HNC residual, positivity,
 and transform-closure gates, and their real SHA-256 values are recorded in
 `manifest.json`.
@@ -19,7 +19,7 @@ The self-contained gallery program
 `benchmarks/examples/plot_johnson_et_al_2025_two_temperature_al.py` has two
 explicit modes:
 
-- `USE_PRECOMPUTED_DATA = True` loads the three accepted files from this
+- `USE_PRECOMPUTED_DATA = True` loads the four accepted files from this
   package and verifies their SHA-256 checksums.
 - `USE_PRECOMPUTED_DATA = False` calls the public Otter workflow directly and
   writes candidate NPZ files plus a candidate manifest under

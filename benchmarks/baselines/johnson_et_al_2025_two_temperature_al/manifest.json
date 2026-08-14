@@ -2,7 +2,7 @@
   "schema_version": "otter_benchmark_manifest_v1",
   "benchmark_id": "johnson_et_al_2025_two_temperature_al",
   "title": "Otter versus Johnson et al. (2025) two-temperature aluminium gii",
-  "description": "Three aluminium states corresponding to Johnson et al. Fig. 2(a), 2(c), and 2(d).",
+  "description": "Four aluminium states corresponding to Johnson et al. Fig. 2(a)-2(d).",
   "data_rights": {
     "baseline_origin_type": "project_generated_numerical_output",
     "reference_data_in_separate_package": true,
@@ -30,32 +30,21 @@
     }
   ],
   "producer": {
-    "project": "Otter",
     "script_relative_path": "benchmarks/examples/plot_johnson_et_al_2025_two_temperature_al.py",
-    "git_commit": "13a307ea8f56f886e8919da5821d040909143432",
+    "script_sha256": "88a8ebf6186a617027acd29c32f861867cb100718ae34dda7f3db2d2128e8c63",
+    "git_commit": "d6bd45708e1c0c034e72bfc548db064b7f6a54e9",
     "worktree_dirty": true,
-    "script_sha256_at_calculation": "2b6793461dcb957fe8b6ce57533c784a8c95acd20fc26afb1d7ad8a645e01d29",
-    "current_controller_sha256": "5ed0e975852b108ad12cc96ba68e1338ed4a672702bde76e44edc541a695ce56",
-    "workflows_sha256_at_calculation": "30f7a13fd5924793955ec8690c55bf0afde9051722fd9081618adf475f9faca0",
-    "status": "three_states_accepted",
-    "note": "The 30 eV state uses raw potential-strength continuation and the Newton-Krylov backend. Exact controller and workflows.py SHA-256 values identify the uncommitted calculation state."
+    "script_sha256_current": "88a8ebf6186a617027acd29c32f861867cb100718ae34dda7f3db2d2128e8c63",
+    "script_sha256_at_generation": "88a8ebf6186a617027acd29c32f861867cb100718ae34dda7f3db2d2128e8c63",
+    "current_controller_sha256": "88a8ebf6186a617027acd29c32f861867cb100718ae34dda7f3db2d2128e8c63"
   },
   "configuration": {
-    "electronic_model": "qm",
-    "structure_model": "IS",
-    "aa_n_points": 1024,
-    "bound_occ_mode": "fd",
-    "b3_tail_model": "full",
-    "continuum_workers_per_state": 6,
+    "aa_n_points": 4096,
     "qoz_n_points_before_padding": 4096,
-    "qoz_pad_factor": 2.0,
-    "qoz_zbar_mode": "pseudoatom_partition",
-    "qoz_renormalize_nscr_to_zbar": true,
-    "chi0_model": "lindhard_fd",
+    "continuum_workers_per_state": 6,
     "lfc_model": "chabrier1990",
-    "hnc_nonlinear_tolerance": 0.0001,
+    "hnc_tolerance": 0.0001,
     "hnc_transform_closure_tolerance": 0.0025,
-    "hnc_max_iterations": 500,
     "hnc_primary_solver": "anderson",
     "hnc_fallback_solver": "newton_krylov",
     "hnc_potential_scales": [
@@ -66,10 +55,7 @@
       0.8,
       1.0
     ],
-    "hnc_adaptive_continuation": true,
-    "hnc_min_scale_step": 0.002,
-    "r_retained_max_bohr": 20.0,
-    "k_retained_max_bohr_inv": 20.0
+    "hnc_adaptive_continuation": true
   },
   "units": {
     "radius": "Bohr",
@@ -88,10 +74,30 @@
       "paper_panel": "Fig. 2(a)",
       "status": "accepted",
       "baseline_file": "al_rho2p7_te1_ti1.npz",
-      "baseline_sha256": "a14c400561580a27a4ede5d94684e4d0abdd806870d68928296243c1fdb09e9b",
-      "zbar_partition": 3.0004801088770865,
-      "hnc_best_residual": 4.070409279205147e-05,
-      "hnc_closure_mismatch": 0.0011440617896290028
+      "baseline_sha256": "442865bd22abb8d523d913bed2f331b85f50b4d0fd007e2e4fa03ff4bbdd7709",
+      "zbar_partition": 3.0004789962130918,
+      "hnc_solver_path": "direct_anderson",
+      "hnc_best_residual": 6.641858728781457e-05,
+      "hnc_min_s_k": 0.08746249478788337,
+      "hnc_closure_mismatch": 0.0010780730318693532,
+      "n_model_points": 1826
+    },
+    {
+      "state_id": "al_rho2p7_te3_ti1",
+      "element": "Al",
+      "rho_g_cc": 2.7,
+      "te_ev": 3.0,
+      "ti_ev": 1.0,
+      "paper_panel": "Fig. 2(b)",
+      "status": "accepted",
+      "baseline_file": "al_rho2p7_te3_ti1.npz",
+      "baseline_sha256": "b05dac79b22b9b00eb674258a15d0224b07a7dc8a10176f26ae3c48938f5f3fa",
+      "zbar_partition": 3.000480098684662,
+      "hnc_solver_path": "direct_anderson",
+      "hnc_best_residual": 3.809583318054121e-05,
+      "hnc_min_s_k": 0.055991572129581946,
+      "hnc_closure_mismatch": 0.001445650070633353,
+      "n_model_points": 1826
     },
     {
       "state_id": "al_rho2p7_te10_ti1",
@@ -102,10 +108,13 @@
       "paper_panel": "Fig. 2(c)",
       "status": "accepted",
       "baseline_file": "al_rho2p7_te10_ti1.npz",
-      "baseline_sha256": "393b3876352d78df43e4f5d52583a0b6c27de755819b3eb861e0258683c75957",
-      "zbar_partition": 3.026460883930323,
-      "hnc_best_residual": 8.006225530243371e-05,
-      "hnc_closure_mismatch": 0.001199035999859932
+      "baseline_sha256": "f55dc75d3aa5d764b88b14b0fd608f1268b45fbc48ebc03a438aec2e0d5e9251",
+      "zbar_partition": 3.0267159910613,
+      "hnc_solver_path": "direct_anderson",
+      "hnc_best_residual": 9.612156472761131e-05,
+      "hnc_min_s_k": 0.02272622702330096,
+      "hnc_closure_mismatch": 0.0008988672284879762,
+      "n_model_points": 1826
     },
     {
       "state_id": "al_rho2p7_te30_ti1",
@@ -116,16 +125,15 @@
       "paper_panel": "Fig. 2(d)",
       "status": "accepted",
       "baseline_file": "al_rho2p7_te30_ti1.npz",
-      "baseline_sha256": "6bf2289249d2791b7e20f8c174c5c4442666f3224dce0eddeef93831740bd785",
-      "zbar_partition": 4.483296652284643,
+      "baseline_sha256": "616544589f51efd31bc0bc07dc2208a6cffebee700eb701736c44bc09d12157d",
+      "zbar_partition": 4.4802052841386395,
       "hnc_primary_solver": "anderson",
       "hnc_primary_best_residual": 1.0,
-      "hnc_primary_min_s_k": -30.97989,
       "hnc_solver_path": "direct_anderson->continuation_newton_krylov",
-      "hnc_best_residual": 3.065211566825401e-10,
-      "hnc_min_s_k": 0.005991821592061686,
-      "hnc_max_s_k": 2.0792750622800438,
-      "hnc_closure_mismatch": 2.8353320802310122e-09
+      "hnc_best_residual": 4.2208944832889535e-11,
+      "hnc_min_s_k": 0.00598481489535152,
+      "hnc_closure_mismatch": 1.789651682404525e-08,
+      "n_model_points": 1826
     }
   ]
 }

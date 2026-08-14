@@ -75,8 +75,8 @@ def test_producer_configuration_is_documented_production_is_start() -> None:
         assert cfg.rho_g_cc == 8.1
         assert cfg.temperature_ev == 15.0
         assert cfg.ion_temperature_ev == 15.0
-        assert cfg.aa_overrides["bound_occ_mode"] == "fd"
-        assert cfg.aa_overrides["b3_tail_model"] == "full"
+        assert cfg.aa_overrides.get("bound_occ_mode", "fd") == "fd"
+        assert cfg.aa_overrides.get("b3_tail_model", "full") == "full"
         assert cfg.aa_overrides.get("bound_rmax_mult") is None
         assert cfg.qoz_zbar_mode == "pseudoatom_partition"
         assert cfg.qoz_renormalize_nscr_to_zbar
