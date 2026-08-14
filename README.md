@@ -179,6 +179,9 @@ are not additional software-citation requirements. See
 
 ## Acknowledgements
 
+The authors thank Zachary A. Johnson and C. E. Starrett for helpful
+discussions.
+
 Chongbing Qu gratefully acknowledges financial support from HEDI and the China
 Scholarship Council (CSC).
 
