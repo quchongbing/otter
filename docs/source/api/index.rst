@@ -23,14 +23,23 @@ below.
    save_plasma_state
    load_plasma_state
 
-Portable state schema
----------------------
+Workflow results and state files
+--------------------------------
+
+.. important::
+
+   **Access calculated arrays:**
+   :doc:`Workflow results and portable NPZ files
+   <../user_guide/state_exports>` is the canonical field reference.  It gives
+   in-memory and NPZ examples, species/pair indexing, shapes, units, metadata,
+   electronic profiles and levels, :math:`q(k)`, :math:`f(k)`, response and
+   LFC arrays, :math:`V_{Ie}(k)`, :math:`V_{ee}(k)`, :math:`V_{ij}(k)`,
+   :math:`g_{ij}(r)`, and :math:`S_{ij}(k)`.
 
 The stable state-file interface stores the native average-atom profiles and
 levels together with :math:`q(k)`, :math:`f(k)`, electron response and LFC,
 interaction channels, :math:`V_{ij}`, :math:`g_{ij}`, and :math:`S_{ij}`
-without pickled Python objects.  See
-:doc:`../user_guide/state_exports` for shapes, units, and examples.
+without pickled Python objects.
 
 .. currentmodule:: otter.io.state
 

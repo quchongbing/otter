@@ -57,8 +57,12 @@ For a single species:
    G = ion["g_ee_k"]
    chi0 = ion["chi0_k"]
    chi_ee = ion["chi_ee_k"]
-   V_ei = ion["v_ei_k"]
+   V_ie = ion["v_ie_k"]
+   V_ee = ion["v_ee_k"]
    C_ie = ion["c_ie_k"]
+   C_ee = ion["c_ee_k"]
+   V_ie_r = ion["v_ie_r"]
+   V_ee_r = ion["v_ee_r"]
    V_ii = ion["vij_k"][0, 0]
    g_ii = ion["gij_r"][0, 0]
    S_ii = ion["sij_k"][0, 0]
@@ -101,6 +105,8 @@ validation is not required:
        k = archive["k_bohr_inv"]
        q = archive["q_k"]
        G = archive["g_ee_k"]
+       V_ee = archive["v_ee_k"]
+       V_ij = archive["vij_k"]
        S = archive["sij_k"]
 
 By default the archive retains :math:`r < 20\,a_{\rm B}` and
@@ -198,6 +204,7 @@ Pair access is direct.  For example:
    symbols = list(state["species_symbols"])
    i_c = symbols.index("C")
    i_h = symbols.index("H")
+   V_ch = state["vij_k"][i_c, i_h]
    g_ch = state["gij_r"][i_c, i_h]
    s_cc = state["sij_k"][i_c, i_c]
 
