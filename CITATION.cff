@@ -8,6 +8,8 @@ date-released: 2026-08-14
 authors:
   - family-names: Qu
     given-names: Chongbing
+  - family-names: Kraus
+    given-names: Dominik
 repository-code: https://github.com/otter-hed/otter
 license: BSD-3-Clause
 keywords:
@@ -26,4 +28,6 @@ preferred-citation:
   authors:
     - family-names: Qu
       given-names: Chongbing
+    - family-names: Kraus
+      given-names: Dominik
   repository-code: https://github.com/otter-hed/otter

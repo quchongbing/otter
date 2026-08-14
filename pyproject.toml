@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "BSD-3-Clause"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
-authors = [{name = "Chongbing Qu"}]
+authors = [{name = "Chongbing Qu"}, {name = "Dominik Kraus"}]
 keywords = [
   "average atom",
   "dense plasma",

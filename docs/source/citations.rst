@@ -1,8 +1,8 @@
 Citing Otter
 ============
 
-If you use Otter in a scientific publication, please cite Chongbing Qu,
-*Otter*, version 0.2.1, computer software (2026),
+If you use Otter in a scientific publication, please cite Chongbing Qu and
+Dominik Kraus, *Otter*, version 0.2.1, computer software (2026),
 https://github.com/otter-hed/otter.
 
 The same metadata are provided in ``CITATION.cff`` and through GitHub's

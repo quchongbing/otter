@@ -17,7 +17,7 @@ PACKAGE_ROOT = SOURCE_ROOT / "otter"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 project = "Otter"
-author = "Chongbing Qu"
+author = "Chongbing Qu and Dominik Kraus"
 copyright = "2026, Chongbing Qu"
 
 try:
